@@ -1,13 +1,15 @@
 {
-  "name": "bitdeliver",
+  "name": "deliverooagent",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "main": "index.js",
+  "module": "index.js",
   "scripts": {
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
+  "author": "Marco",
   "license": "ISC",
   "devDependencies": {
     "dotenv": "^16.0.3"
