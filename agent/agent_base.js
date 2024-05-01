@@ -2,7 +2,7 @@ import { DeliverooApi } from "@unitn-asa/deliveroo-js-client";
 
 const client = new DeliverooApi(
     'http://localhost:8080',
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA5ZmQ2NDllNzZlIiwibmFtZSI6Im1hcmNvIiwiaWF0IjoxNjc5OTk3Njg2fQ.6_zmgL_C_9QgoOX923ESvrv2i2_1bgL_cWjMw4M7ah4'
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImY4OTAwZWE1NmViIiwibmFtZSI6ImVtbWF2aWNvIiwiaWF0IjoxNzE0NTY4Mjc0fQ.Lr_L4aaiIVss76T0QZuFiS950lIaVsRXsK7W80h8hMs'
 )
 
 function distance( {x:x1, y:y1}, {x:x2, y:y2}) {
@@ -19,6 +19,17 @@ client.onYou( ( {id, name, x, y, score} ) => {
     me.y = y
     me.score = score
 } )
+
+const map={}
+client.onMap(( width, height, tiles ) => {
+    map.append({width,height,tiles})
+    console.log("CARATTERISTICHE MAPPA", width, height, tiles)
+})
+
+client.onConfig(( config ) => {
+    console.log("Config", config)
+})
+
 
 const parcels = new Map()
 client.onParcelsSensing( async ( perceived_parcels ) => {
@@ -51,7 +62,6 @@ function select (options) {
  */
 
 function agentLoop() {
-    console.log(client.onTile())
     // belief_revision_function()
     // const options = options() // desire pick up parcel p1 or p2
     // const selected = select(options) // p1 is closer!
