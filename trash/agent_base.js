@@ -1,5 +1,6 @@
 import { DeliverooApi } from "@unitn-asa/deliveroo-js-client";
 import { Pathfinder, Node } from './Pathfinder.mjs';
+import{IntentionRevision,IntentionRevisionQueue,IntentionRevisionReplace,IntentionRevisionRevise }from './intention.js';
 
 
 
