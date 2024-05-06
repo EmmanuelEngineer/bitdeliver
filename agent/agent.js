@@ -11,9 +11,9 @@ const client = new DeliverooApi(
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImY4OTAwZWE1NmViIiwibmFtZSI6ImVtbWF2aWNvIiwiaWF0IjoxNzE0NTY4Mjc0fQ.Lr_L4aaiIVss76T0QZuFiS950lIaVsRXsK7W80h8hMs'
 )
 
-function distance_manhattan({ x: x1, y: y1 }, { x: x2, y: y2 }) {
-    const dx = Math.abs(Math.round(x1) - Math.round(x2))
-    const dy = Math.abs(Math.round(y1) - Math.round(y2))
+function distance_manhattan(a,b) {
+    const dx = Math.abs(Math.round(a.x) - Math.round(b.x))
+    const dy = Math.abs(Math.round(a.y) - Math.round(a.y))
     return dx + dy;
 }
 
@@ -23,26 +23,28 @@ function generate_favorite_coordinates() {
         const { x, y } = tile;
         for (let i = x - 1; i <= x + 1; i++) {
             for (let j = y - 1; j <= y + 1; j++) {
-                if (i >= 0 && i < map.width && j >= 0 && j < map.height) {
-                    const key = {i,j};
+                if ((i >= 0) && (i < map.width) && (j >= 0) && (j < map.height)) {
+                    const key = `${i}_${j}`;
                     temporaryGridMap.set(key, (temporaryGridMap.get(key) || 0) + 1);
                 }
             }
         }
     }
     const resultList = [];
-    for (let tile of map.tiles) {
-        let x = tile.x
-        let y = tile.y
-        const key = {x,y};
+    for (let tile of map.spawnable_tiles) {
+        
+        let x = tile.x;
+        let y = tile.y;
+        const key = `${x}_${y}`;
         const value = temporaryGridMap.get(key);
         if (value !== undefined && value !== 0) {
             resultList.push({ x, y, value });
         }
     }
-    resultList.sort((a, b) => a.value - b.value);
+    resultList.sort((a, b) =>  b.value - a.value);
     return resultList;
 }
+
 
 function distance_path(a, b) {
 
@@ -53,8 +55,8 @@ function distance_path(a, b) {
 }
 
 function get_nearest_delivery_point_path(a) {
-    let min;
-    let temp = null;
+    let min= Number.MAX_VALUE;
+    let temp = Number.MAX_VALUE;
     for (let delivery_point of map.delivery_tiles) {
         temp = distance_path(a, delivery_point)
         if (temp == null) continue;
@@ -64,11 +66,11 @@ function get_nearest_delivery_point_path(a) {
 }
 
 function get_nearest_delivery_point_manhattan(a) {
-    let min;
-    let temp = null;
+    let min= Number.MAX_VALUE;
+    let temp = Number.MAX_VALUE;
     for (let delivery_point of map.delivery_tiles) {
-
         temp = distance_manhattan(a, delivery_point)
+        console.log("DISTANCE PER PARCEL",min)
         if (temp == null) continue;
         if (temp < min) min = temp
     }
@@ -118,7 +120,7 @@ client.onMap((width, height, tiles) => {
     map.spawnable_tiles = spawnable_tiles;
     console.log("CARATTERISTICHE MAPPA", width, height, tiles)
     map.favorite_coordinates = generate_favorite_coordinates()
-    console.log(map.favorite_coordinates)
+    //console.log(map.favorite_coordinates)
 })
 
 
@@ -174,6 +176,7 @@ client.onAgentsSensing( (agents) => {
             }).join(' ');
             console.log("memory:\n" + printBelief);
         }
+        option_generation()
     }
 })
 
@@ -181,7 +184,6 @@ client.onAgentsSensing( (agents) => {
 /**
  * Options generation and filtering function
  */
-const options = []
 client.onParcelsSensing( parcels => {
     if (parcels != undefined) {
         time = Date.now() - start;
@@ -192,19 +194,24 @@ client.onParcelsSensing( parcels => {
             if (!beliefSet_parcels.has(p.id)) {
                 p.viewable = true
                 beliefSet_parcels.set(p.id, p)
+                if(p.carriedBy == me.id) p.carriedBy = "me"
             }
         }
         //update on all beliefs
         for (const p of beliefSet_parcels.values()) {
             //viewable
+            if(p.carriedBy == me.id) p.carriedBy = "me"
+
             (distance_manhattan(me, p) > config.PARCELS_OBSERVATION_DISTANCE) ? p.viewable = false : p.viewable = true
             if (Date.now() - p.time > 1000) {
                 p.reward = p.reward - 1
                 p.time = Date.now()
             }
 
-            if (p.reward <= 1)
-                delete beliefSet_parcels[p.id]
+            if (p.reward <= 1){
+                console.log("delete parcel memory")
+                beliefSet_parcels.delete(p.id)
+            }
             else
                 beliefSet_parcels.set(p.id, p);
         }
@@ -221,19 +228,23 @@ function option_generation(){
         /**
      * Options generation
      */
+        const options = []
+
 
         for (const parcel of beliefSet_parcels.values()) {
             if (!parcel.carriedBy) {
                 let distance = distance_path(me, parcel)
-                console.log("DISTANCE", distance)
+                console.log("PATH DISTANCE", distance)
                 if (!distance) continue
-                let priority = parcel.reward - distance - get_nearest_delivery_point_manhattan({ x: parcel[2], y: parcel[3] })
+                let priority = parcel.reward - distance - get_nearest_delivery_point_manhattan(parcel)
+                console.log("PATH Reward",  get_nearest_delivery_point_manhattan(parcel))
+
                 options.push(['go_pick_up', priority, parcel.x, parcel.y, parcel.id]);
     
     
             }
             else if (parcel.carriedBy == me.id) {
-                let distance = get_nearest_delivery_point_path({ x: parcel[2], y: parcel[3] })
+                let distance = get_nearest_delivery_point_path(parcel)
                 if (!distance) continue
     
                 let already_present = false
@@ -263,6 +274,7 @@ function option_generation(){
     
         let best_option;
         let max_priority = 0;
+        console.log(options)
         for (const option of options) {
             if (option[1] > max_priority) {
                 max_priority = option[1]
