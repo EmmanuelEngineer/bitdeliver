@@ -22,20 +22,7 @@ function distance({ x: x1, y: y1 }, { x: x2, y: y2 }) {
     return dx + dy;
 }
 
-function printGrid(grid) {
-    let string = "["
-    for (const row of grid) {
-        let rowString = '[';
-        for (const element of row) {
-            rowString += element + ',';
-        }
-        rowString += "]"
-        string += rowString.trim()
-        string += "\n"
-    }
-    string += "]"
-    return string
-}
+
 
 
 const me = {};

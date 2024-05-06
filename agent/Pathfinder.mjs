@@ -5,6 +5,38 @@ export class Pathfinder {
     this.columns = height
 
    }
+
+   static printGrid(grid) {
+    let string = ""
+    grid = this.rotateMatrix(grid)
+    for (const row of grid) {
+        let rowString = '\n';
+        for (const element of row) {
+          let character;
+            if (element==0) character = "🟩";
+            else character="🟥";
+            rowString += character;
+        }
+        string += rowString.trim()
+        string += "\n"
+    }
+    return string
+}
+static text_printGrid(grid) {
+  let string = "["
+  for (const row of grid) {
+      let rowString = '[\n';
+      for (const element of row) {
+
+          rowString += element + ',';
+      }
+      rowString += "]"
+      string += rowString.trim()
+      string += "\n"
+  }
+  string += "]"
+  return string
+}
   aStar(grid, start, end) {
     const openSet = [start];
     const closedSet = new Set();
@@ -78,7 +110,7 @@ export class Pathfinder {
     }
     return matrix;
   }
-  generategrid(map, agents_position) {
+  generategrid(map, agents) {
     let grid;
     //the agent position is needed to consider the paths non available
     grid = this.initializeMatrix(map.height, map.width)
@@ -87,13 +119,13 @@ export class Pathfinder {
       grid[tile.x][tile.y] = 0;
     }
 
-    for (let tile of agents_position) {
-      grid[tile.x][tile.y] = 0;
+    for (let agent of agents) {
+      grid[agent.x][agent.y] = 1;
     }
     return grid;
   }
 
-  rotateMatrix(matrix) {
+  static rotateMatrix(matrix) {
     const rows = matrix.length;
     const cols = matrix[0].length;
 
@@ -103,13 +135,8 @@ export class Pathfinder {
             [matrix[i][j], matrix[j][i]] = [matrix[j][i], matrix[i][j]];
         }
     }
+    matrix.reverse()
 
-    // Step 2: Reverse each row of the transposed matrix
-    for (let i = 0; i < rows; i++) {
-        for (let j = 0; j < cols / 2; j++) {
-            [matrix[i][j], matrix[i][cols - 1 - j]] = [matrix[i][cols - 1 - j], matrix[i][j]];
-        }
-    }
 
     return matrix;
 }

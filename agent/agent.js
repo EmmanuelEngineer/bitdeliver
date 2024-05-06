@@ -1,10 +1,10 @@
 import { DeliverooApi } from "@unitn-asa/deliveroo-js-client";
 import { Pathfinder, Node } from './Pathfinder.mjs';
 
-/* Da aggingere la parte di aggiornamento delle opzioni,
- aggiungere i posti di default,
-  identificazione dei punti di consegna e spawn pacchetti
-  considerazione degli agenti come ostacoli
+/* 
+    Da aggingere la parte di aggiornamento delle opzioni,
+    aggiungere i posti di default,
+    identificazione dei punti di consegna e spawn pacchetti
   */
 const client = new DeliverooApi(
     'http://localhost:8080',
@@ -24,9 +24,20 @@ function distance_path(a, b) {
     else return path[0].length
 }
 
+function get_nearest_delivery_point(a){
+    let min;
+    let temp = null;
+    for(let delivery_point of map.delivery_tiles){
+        temp = distance_path(a,delivery_point)
+        if(temp == null) continue;
+        if(temp<min)min = temp
+    }
+    return min
+}
+
 function pathfind(start_pos, end_pos) {
-    let grid = pathfinder.generategrid(map, [])
-    console.log("ARGUMENTS PATHFINDER",start_pos, end_pos)
+    let grid = pathfinder.generategrid(map, beliefSet_agents.values())
+    //console.log(Pathfinder.printGrid(grid))
     let start = new Node(Math.round(start_pos.x), Math.round(start_pos.y), 0, 0);
     let end = new Node(Math.round(end_pos.x), Math.round(end_pos.y), 0, 0);
     let path = pathfinder.aStar(grid, start, end);
@@ -55,6 +66,17 @@ client.onMap((width, height, tiles) => {
     map.width = width;
     map.height = height;
     map.tiles = tiles;
+    let delivery_tiles = []
+    for (let tile of tiles){
+        if(tile.delivery) delivery_tiles.push(tile)
+    }
+    map.delivery_tiles= delivery_tiles;
+
+    let spawnable_tiles = []
+    for (let tile of tiles){
+        if(tile.parcelSpawner) spawnable_tiles.push(tile)
+    }
+    map.spawnable_tiles= spawnable_tiles;
     console.log("CARATTERISTICHE MAPPA", width, height, tiles)
     pathfinder = new Pathfinder(map.width, map.height)
 })
@@ -158,14 +180,37 @@ client.onParcelsSensing(async parcels => {
     /**
      * Options generation
      */
-    for (const parcel of parcels.values())
+    for (const parcel of parcels.values()){
         if (!parcel.carriedBy) {
             let distance = distance_path(me, parcel)
-            console.log("DISTANCE",distance)
+            console.log("DISTANCE", distance)
             if (!distance) continue
             let priority = distance + parcel.reward
             options.push(['go_pick_up', priority, parcel.x, parcel.y, parcel.id]);
         }
+        if(parcel.carriedBy== me.id){
+            let already_present = false
+            for(let option of options){
+                if (option[0] == "go_deliver"){
+                    already_present = true
+                    let distance = get_nearest_delivery_point({x:option[2],y:option[3]})
+                    console.log("DISTANCE", distance)
+                    if (!distance) continue
+                    let priority = distance + parcel.reward
+                    option[1] = option[1]+priority
+                    break
+                }
+            }
+            if(!already_present){
+                let distance = get_nearest_delivery_point(me)
+                console.log("DISTANCE", distance)
+                if (!distance) continue
+                let priority = distance + parcel.reward
+                options.push(['go_deliver', priority, parcel.x, parcel.y, parcel.id]);
+
+            }
+        }
+    }
     // myAgent.push( [ 'go_pick_up', parcel.x, parcel.y, parcel.id ] )
 
     /**
@@ -175,8 +220,6 @@ client.onParcelsSensing(async parcels => {
 
     let best_option;
     let nearest = Number.MAX_VALUE;
-    console.log("OIFBAIUBIJBAIND",options)
-
     for (const option of options) {
         if (option[0] == 'go_pick_up') {
             let [go_pick_up, priority, x, y, id] = option;
@@ -461,11 +504,28 @@ class GoPickUp extends Plan {
         return go_pick_up == 'go_pick_up';
     }
 
-    async execute(go_pick_up,reward, x, y) {
+    async execute(go_pick_up, reward, x, y) {
         if (this.stopped) throw ['stopped']; // if stopped then quit
         await this.subIntention(['go_to', x, y]);
         if (this.stopped) throw ['stopped']; // if stopped then quit
         await client.pickup()
+        if (this.stopped) throw ['stopped']; // if stopped then quit
+        return true;
+    }
+
+}
+
+class Deliver extends Plan {
+
+    static isApplicableTo(desire, x, y, id) {
+        return desire == 'go_deliver';
+    }
+
+    async execute(desire, reward, x, y) {
+        if (this.stopped) throw ['stopped']; // if stopped then quit
+        await this.subIntention(['go_to', x, y]);
+        if (this.stopped) throw ['stopped']; // if stopped then quit
+        await client.putdown()
         if (this.stopped) throw ['stopped']; // if stopped then quit
         return true;
     }
@@ -479,10 +539,12 @@ class BlindMove extends Plan {
     }
 
     async execute(desire, x, y, id) {
-        console.log("ARGUMENTS",desire, x, y, id)
+        console.log("ARGUMENTS", desire, x, y, id)
         console.log("starting movement to:xy", x, y);
-        let path = pathfind(me, {x:x,y:y})
+        let path = pathfind(me, { x: x, y: y })
+        if(me.x==x && me.y ==y) return;
         while (me.x != x || me.y != y) {
+            console.log("POLLO")
             if (this.stopped) throw ['stopped']; // if stopped then quit
 
             let step_counter = 1;
@@ -537,3 +599,4 @@ class BlindMove extends Plan {
 // plan classes are added to plan library 
 planLibrary.push(GoPickUp)
 planLibrary.push(BlindMove)
+planLibrary.push(Deliver)
