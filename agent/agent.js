@@ -1,10 +1,10 @@
 import { DeliverooApi } from "@unitn-asa/deliveroo-js-client";
 import { Pathfinder, Node } from './Pathfinder.mjs';
+import{Utilities as ut } from "./Utilities.js"
 
 /* 
     Da aggingere la parte di aggiornamento delle opzioni,
     aggiungere i posti di default,
-    identificazione dei punti di consegna e spawn pacchetti
   */
 const client = new DeliverooApi(
     'http://localhost:8080',
@@ -17,31 +17,71 @@ function distance_manhattan({ x: x1, y: y1 }, { x: x2, y: y2 }) {
     return dx + dy;
 }
 
+function generate_favorite_coordinates() {
+    const temporaryGridMap = new Map();
+    for (let tile of map.spawnable_tiles) {
+        const { x, y } = tile;
+        for (let i = x - 1; i <= x + 1; i++) {
+            for (let j = y - 1; j <= y + 1; j++) {
+                if (i >= 0 && i < map.width && j >= 0 && j < map.height) {
+                    const key = {i,j};
+                    temporaryGridMap.set(key, (temporaryGridMap.get(key) || 0) + 1);
+                }
+            }
+        }
+    }
+    const resultList = [];
+    for (let tile of map.tiles) {
+        let x = tile.x
+        let y = tile.y
+        const key = {x,y};
+        const value = temporaryGridMap.get(key);
+        if (value !== undefined && value !== 0) {
+            resultList.push({ x, y, value });
+        }
+    }
+    resultList.sort((a, b) => a.value - b.value);
+    return resultList;
+}
+
 function distance_path(a, b) {
+
     let path = pathfind(a, b)
     if (path == null)
         return null
     else return path[0].length
 }
 
-function get_nearest_delivery_point(a){
+function get_nearest_delivery_point_path(a) {
     let min;
     let temp = null;
-    for(let delivery_point of map.delivery_tiles){
-        temp = distance_path(a,delivery_point)
-        if(temp == null) continue;
-        if(temp<min)min = temp
+    for (let delivery_point of map.delivery_tiles) {
+        temp = distance_path(a, delivery_point)
+        if (temp == null) continue;
+        if (temp < min) min = temp
+    }
+    return min
+}
+
+function get_nearest_delivery_point_manhattan(a) {
+    let min;
+    let temp = null;
+    for (let delivery_point of map.delivery_tiles) {
+
+        temp = distance_manhattan(a, delivery_point)
+        if (temp == null) continue;
+        if (temp < min) min = temp
     }
     return min
 }
 
 function pathfind(start_pos, end_pos) {
-    let grid = pathfinder.generategrid(map, beliefSet_agents.values())
-    //console.log(Pathfinder.printGrid(grid))
+    let grid = ut.generategrid(map, beliefSet_agents.values())
+    //console.log(ut.printGridSE(grid,start_pos,end_pos))
     let start = new Node(Math.round(start_pos.x), Math.round(start_pos.y), 0, 0);
     let end = new Node(Math.round(end_pos.x), Math.round(end_pos.y), 0, 0);
-    let path = pathfinder.aStar(grid, start, end);
-    console.log("Shortest Path:", path);
+    let path = Pathfinder.aStar(grid, start, end);
+    //console.log("Shortest Path:", path);
     return path;
 }
 const beliefSet_agents = new Map();
@@ -61,24 +101,24 @@ client.onConfig((config_input) => {
 })
 
 const map = {};
-var pathfinder;
 client.onMap((width, height, tiles) => {
     map.width = width;
     map.height = height;
     map.tiles = tiles;
     let delivery_tiles = []
-    for (let tile of tiles){
-        if(tile.delivery) delivery_tiles.push(tile)
+    for (let tile of tiles) {
+        if (tile.delivery) delivery_tiles.push(tile)
     }
-    map.delivery_tiles= delivery_tiles;
+    map.delivery_tiles = delivery_tiles;
 
     let spawnable_tiles = []
-    for (let tile of tiles){
-        if(tile.parcelSpawner) spawnable_tiles.push(tile)
+    for (let tile of tiles) {
+        if (tile.parcelSpawner) spawnable_tiles.push(tile)
     }
-    map.spawnable_tiles= spawnable_tiles;
+    map.spawnable_tiles = spawnable_tiles;
     console.log("CARATTERISTICHE MAPPA", width, height, tiles)
-    pathfinder = new Pathfinder(map.width, map.height)
+    map.favorite_coordinates = generate_favorite_coordinates()
+    console.log(map.favorite_coordinates)
 })
 
 
@@ -97,7 +137,7 @@ client.onYou(({ id, name, x, y, score }) => {
 
 
 
-client.onAgentsSensing(async (agents) => {
+client.onAgentsSensing( (agents) => {
     if (agents != undefined) {
         time = Date.now() - start;
 
@@ -142,14 +182,14 @@ client.onAgentsSensing(async (agents) => {
  * Options generation and filtering function
  */
 const options = []
-client.onParcelsSensing(async parcels => {
+client.onParcelsSensing( parcels => {
     if (parcels != undefined) {
         time = Date.now() - start;
 
         for (let p of parcels) {
             p.time = time
             //compute direction
-            if (!beliefSet_agents.has(p.id)) {
+            if (!beliefSet_parcels.has(p.id)) {
                 p.viewable = true
                 beliefSet_parcels.set(p.id, p)
             }
@@ -173,71 +213,71 @@ client.onParcelsSensing(async parcels => {
             return `${id}:${x},${y},${reward},${time},${viewable},${carriedBy}\n`;
         }).join(' ');
         console.log("parcel_memory:\n" + printBelief);
-
-
-
     }
-    /**
+    option_generation()
+})
+
+function option_generation(){
+        /**
      * Options generation
      */
-    for (const parcel of parcels.values()){
-        if (!parcel.carriedBy) {
-            let distance = distance_path(me, parcel)
-            console.log("DISTANCE", distance)
-            if (!distance) continue
-            let priority = distance + parcel.reward
-            options.push(['go_pick_up', priority, parcel.x, parcel.y, parcel.id]);
-        }
-        if(parcel.carriedBy== me.id){
-            let already_present = false
-            for(let option of options){
-                if (option[0] == "go_deliver"){
-                    already_present = true
-                    let distance = get_nearest_delivery_point({x:option[2],y:option[3]})
-                    console.log("DISTANCE", distance)
-                    if (!distance) continue
-                    let priority = distance + parcel.reward
-                    option[1] = option[1]+priority
-                    break
-                }
-            }
-            if(!already_present){
-                let distance = get_nearest_delivery_point(me)
+
+        for (const parcel of beliefSet_parcels.values()) {
+            if (!parcel.carriedBy) {
+                let distance = distance_path(me, parcel)
                 console.log("DISTANCE", distance)
                 if (!distance) continue
-                let priority = distance + parcel.reward
-                options.push(['go_deliver', priority, parcel.x, parcel.y, parcel.id]);
-
+                let priority = parcel.reward - distance - get_nearest_delivery_point_manhattan({ x: parcel[2], y: parcel[3] })
+                options.push(['go_pick_up', priority, parcel.x, parcel.y, parcel.id]);
+    
+    
             }
+            else if (parcel.carriedBy == me.id) {
+                let distance = get_nearest_delivery_point_path({ x: parcel[2], y: parcel[3] })
+                if (!distance) continue
+    
+                let already_present = false
+                for (let option of options) {
+                    // se esiste l'opzione di consegnare, aggiungi reward alla prioditá
+                    if (option[0] == "go_deliver") {
+                        already_present = true
+                        let priority = parcel.reward
+                        option[1] = option[1] + priority
+                        break
+                    }
+                }
+                if (!already_present) {
+                    let priority = parcel.reward - distance
+                    options.push(['go_deliver', priority, parcel.x, parcel.y, parcel.id]);
+    
+                }
+            }
+    
         }
-    }
-    // myAgent.push( [ 'go_pick_up', parcel.x, parcel.y, parcel.id ] )
-
-    /**
-     * Options filtering
-     */
-
-
-    let best_option;
-    let nearest = Number.MAX_VALUE;
-    for (const option of options) {
-        if (option[0] == 'go_pick_up') {
-            let [go_pick_up, priority, x, y, id] = option;
-            let current_d = distance_path({ x, y }, me)
-            if (current_d < nearest) {
+        // myAgent.push( [ 'go_pick_up', parcel.x, parcel.y, parcel.id ] )
+    
+        /**
+         * Options filtering
+         */
+    
+    
+        let best_option;
+        let max_priority = 0;
+        for (const option of options) {
+            if (option[1] > max_priority) {
+                max_priority = option[1]
                 best_option = option
-                nearest = current_d
             }
         }
-    }
-
-    /**
-     * Best option is selected
-     */
-    if (best_option)
+        /**
+         * Best option is selected
+         */
+        if (best_option)
         myAgent.push(best_option)
+}
 
-})
+
+
 // client.onAgentsSensing( agentLoop )
 // client.onYou( agentLoop )
 
@@ -542,7 +582,7 @@ class BlindMove extends Plan {
         console.log("ARGUMENTS", desire, x, y, id)
         console.log("starting movement to:xy", x, y);
         let path = pathfind(me, { x: x, y: y })
-        if(me.x==x && me.y ==y) return;
+        if (me.x == x && me.y == y) return;
         while (me.x != x || me.y != y) {
             console.log("POLLO")
             if (this.stopped) throw ['stopped']; // if stopped then quit

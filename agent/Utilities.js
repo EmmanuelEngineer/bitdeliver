@@ -1,0 +1,105 @@
+export class Utilities {
+  static printGrid(grid) {
+    let string = ""
+    //grid = this.rotateMatrix(grid)
+    for (const row of grid) {
+      let rowString = '\n';
+      for (const element of row) {
+        let character;
+        if (element == 0) character = "🟩";
+        else character = "🟥";
+        rowString += character;
+      }
+      string += rowString.trim()
+      string += "\n"
+    }
+    return string
+  }
+
+  static printGridSE(grid, start, end) {
+    //console.log("START",start,"END",end)
+    let string = ""
+    let copy = JSON.parse(JSON.stringify(grid));
+    copy[start.x][start.y] = 3
+    copy[end.x][end.y] = 4
+    //grid = this.rotateMatrix(grid)
+    for (const row of copy) {
+      let rowString = '\n';
+      for (const element of row) {
+        let character;
+        if (element == 0) character = "🟩";
+        else if (element == 1) character = "🟥";
+        else if (element == 3) character = "🤖";
+        else if (element == 4) character = "🏁";
+        rowString += character;
+      }
+      string += rowString.trim()
+      string += "\n"
+    }
+    return string
+  }
+
+  static text_printGrid(grid) {
+    let string = "["
+    for (const row of grid) {
+      let rowString = '[\n';
+      for (const element of row) {
+
+        rowString += element + ',';
+      }
+      rowString += "]"
+      string += rowString.trim()
+      string += "\n"
+    }
+    string += "]"
+    return string
+  }
+
+  static rotateMatrix(matrix) {
+    const rows = matrix.length;
+    const cols = matrix[0].length;
+
+    // Step 1: Transpose the matrix
+    for (let i = 0; i < rows; i++) {
+      for (let j = i; j < cols; j++) {
+        [matrix[i][j], matrix[j][i]] = [matrix[j][i], matrix[i][j]];
+      }
+    }
+    matrix.reverse()
+
+
+    return matrix;
+  }
+
+
+
+  static initializeMatrix(n, m) {
+    const matrix = [];
+    for (let i = 0; i < n; i++) {
+      const row = [];
+      for (let j = 0; j < m; j++) {
+        row.push(1); // Pushing a list containing the number 1
+      }
+      matrix.push(row);
+    }
+    return matrix;
+  }
+
+  static generategrid(map, agents) {
+    let grid;
+    //the agent position is needed to consider the paths non available
+    grid = this.initializeMatrix(map.height, map.width)
+    console.log(map.height, map.width)
+    for (let tile of map.tiles) {
+      grid[tile.x][tile.y] = 0;
+    }
+    for (let agent of agents) {
+      if (agent == undefined) break
+      try {
+        Utilities.printGrid(grid)
+        grid[Math.round(agent.x)][Math.round(agent.y)] = 1;
+      } catch (err) { console.log("AAAAAAAAAAAAAAAAAAAAAAAA", err) }
+    }
+    return grid;
+  }
+}
