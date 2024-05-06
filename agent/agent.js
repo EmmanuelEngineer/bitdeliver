@@ -194,14 +194,11 @@ client.onParcelsSensing( parcels => {
             if (!beliefSet_parcels.has(p.id)) {
                 p.viewable = true
                 beliefSet_parcels.set(p.id, p)
-                if(p.carriedBy == me.id) p.carriedBy = "me"
             }
         }
         //update on all beliefs
         for (const p of beliefSet_parcels.values()) {
             //viewable
-            if(p.carriedBy == me.id) p.carriedBy = "me"
-
             (distance_manhattan(me, p) > config.PARCELS_OBSERVATION_DISTANCE) ? p.viewable = false : p.viewable = true
             if (Date.now() - p.time > 1000) {
                 p.reward = p.reward - 1
@@ -232,18 +229,18 @@ function option_generation(){
 
 
         for (const parcel of beliefSet_parcels.values()) {
+            console.log(parcel,me.id)
             if (!parcel.carriedBy) {
                 let distance = distance_path(me, parcel)
                 console.log("PATH DISTANCE", distance)
                 if (!distance) continue
                 let priority = parcel.reward - distance - get_nearest_delivery_point_manhattan(parcel)
-                console.log("PATH Reward",  get_nearest_delivery_point_manhattan(parcel))
-
                 options.push(['go_pick_up', priority, parcel.x, parcel.y, parcel.id]);
     
     
             }
             else if (parcel.carriedBy == me.id) {
+                console.log("############")
                 let distance = get_nearest_delivery_point_path(parcel)
                 if (!distance) continue
     

@@ -3,7 +3,6 @@ import{Utilities as ut } from "./Utilities.js"
 
 export class Pathfinder {
   static aStar(grid, start, end) {
-    console.log("AAAAAAAAAAAAAAAAA")
     const openSet = [start];
     const closedSet = new Set();
     while (openSet.length > 0) {
