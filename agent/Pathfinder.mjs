@@ -10,7 +10,7 @@ export class Pathfinder {
       //console.log("Giá occupato",ut.printGridSE(grid,start,end))
           return null
     }
-    while (openSet.length > 0&&openSet.length<100) {
+    while (openSet.length > 0&&openSet.length<1000) {
       try{
       openSet.sort((a, b) => a.totalCost - b.totalCost);
       const currentNode = openSet.shift();

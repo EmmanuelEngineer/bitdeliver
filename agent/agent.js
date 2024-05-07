@@ -13,7 +13,7 @@ const client = new DeliverooApi(
 var deliver_multiplier = 5
 function distance_manhattan(a,b) {
     const dx = Math.abs(Math.round(a.x) - Math.round(b.x))
-    const dy = Math.abs(Math.round(a.y) - Math.round(a.y))
+    const dy = Math.abs(Math.round(a.y) - Math.round(b.y))
     return dx + dy;
 }
 
@@ -41,6 +41,7 @@ function generate_favorite_coordinates() {
         }
     }
     const resultList = [];
+
     for (let tile of map.spawnable_tiles) {
         
         let x = tile.x;
@@ -48,7 +49,7 @@ function generate_favorite_coordinates() {
         const key = `${x}_${y}`;
         const value = temporaryGridMap.get(key);
         if (value !== undefined && value > 4) {
-            resultList.push({ x, y, value,time:start });
+            resultList.push({ x, y, value,time:start-max_time });
         }
     }
     resultList.sort((a, b) =>  b.value - a.value);
@@ -113,19 +114,21 @@ let time = 0;
 const start = Date.now();
 
 const config = {}
-const decay_step = 0
-const decay_time = 1;
+var decay_step = 0
+var decay_time = 1;
 client.onConfig((config_input) => {
     console.log("Config", config_input)
-    client.onConfig(config_input => {
         config.AGENTS_OBSERVATION_DISTANCE = config_input.AGENTS_OBSERVATION_DISTANCE;
         config.PARCELS_OBSERVATION_DISTANCE = config_input.PARCELS_OBSERVATION_DISTANCE;
         config.PARCEL_DECADING_INTERVAL = config_input.PARCEL_DECADING_INTERVAL;
+        config.MOVEMENT_DURATION = config_input.MOVEMENT_DURATION
         if(config.PARCEL_DECADING_INTERVAL =="infinite") decay_step = 0
-        else decay_time= parseInt(config.PARCEL_DECADING_INTERVAL.match(/\d+(\.\d+)?/)[0])})
+        else decay_time= parseInt(config.PARCEL_DECADING_INTERVAL.match(/\d+(\.\d+)?/)[0])
+        console.log(config.MOVEMENT_DURATION )
 })
 
 const map = {};
+var max_time = 1000;
 client.onMap((width, height, tiles) => {
     map.width = width;
     map.height = height;
@@ -142,6 +145,7 @@ client.onMap((width, height, tiles) => {
     }
     map.spawnable_tiles = spawnable_tiles;
     console.log("CARATTERISTICHE MAPPA", width, height, tiles)
+    max_time = map.width*map.height*config.MOVEMENT_DURATION/10
     map.favorite_coordinates = generate_favorite_coordinates()
     //console.log(map.favorite_coordinates)
 })
@@ -302,15 +306,16 @@ function option_generation(){
     
     
         let best_option;
-        let max_priority = Number.MIN_SAFE_INTEGER;
         if (options.length ==0){
+            let time = config.MOVEMENT_DURATION*map.favorite_coordinates.length;
                 for(let position of map.favorite_coordinates){
                     if(me.x==position.x&& me.y == position.y){
                         position.time = Date.now()
                     }
-                    console.log(position, Date.now()-position.time)
-                    if(Date.now()-position.time>5000){
+                    //console.log(position, Date.now()-position.time,config.MOVEMENT_DURATION)
+                    if(Date.now()-position.time>max_time){
                         let distance = distance_manhattan(me,position)
+                        //console.log("##########################",me,position,distance)
                         options.push(["go_to",position.x,position.y,position.value-distance])
                     }
                 }
@@ -327,12 +332,14 @@ function option_generation(){
         
 
         console.log("OPTIONS",options)
+        let max_priority = Number.MIN_SAFE_INTEGER;
 
         for (const option of options) {
-            if (option[1] > max_priority & option[0]!="go_to") {
+            //console.log(option)
+            if (option[1] > max_priority && option[0]!="go_to") {
                 max_priority = option[1]
                 best_option = option
-            }else if (option[3] > max_priority & option[0]=="go_to") {
+            }else if (option[3] > max_priority && option[0]=="go_to") {
                 max_priority = option[3]
                 best_option = option
             }
@@ -657,7 +664,7 @@ class BlindMove extends Plan {
         console.log("ARGUMENTS", desire, x, y, id)
         console.log("starting movement to:xy", x, y);
         let path = pathfind(me, { x: x, y: y })
-        console.log(path)
+        //console.log(path)
         if(path== null) return
         let step_counter = 1;
         let grid = ut.generategrid(map, beliefSet_agents.values())
@@ -671,7 +678,7 @@ class BlindMove extends Plan {
                 throw ['stopped']; // if stopped then quit
             }
 
-            console.log("step_conter", step_counter)
+            //console.log("step_conter", step_counter)
             let status_x = undefined;
             let status_y = undefined;
 
