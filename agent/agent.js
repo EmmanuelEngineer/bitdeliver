@@ -10,13 +10,23 @@ const client = new DeliverooApi(
     'http://localhost:8080',
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImY4OTAwZWE1NmViIiwibmFtZSI6ImVtbWF2aWNvIiwiaWF0IjoxNzE0NTY4Mjc0fQ.Lr_L4aaiIVss76T0QZuFiS950lIaVsRXsK7W80h8hMs'
 )
-
+var deliver_multiplier = 5
 function distance_manhattan(a,b) {
     const dx = Math.abs(Math.round(a.x) - Math.round(b.x))
     const dy = Math.abs(Math.round(a.y) - Math.round(a.y))
     return dx + dy;
 }
 
+function delete_put_down(){
+    for (const p of beliefSet_parcels.values()) {
+
+        if (p.carriedBy == me.id){
+            console.log("delete parcel memory")
+            beliefSet_parcels.delete(p.id)
+        }
+    }
+
+}
 function generate_favorite_coordinates() {
     const temporaryGridMap = new Map();
     for (let tile of map.spawnable_tiles) {
@@ -38,7 +48,7 @@ function generate_favorite_coordinates() {
         const key = `${x}_${y}`;
         const value = temporaryGridMap.get(key);
         if (value !== undefined && value !== 0) {
-            resultList.push({ x, y, value });
+            resultList.push({ x, y, value,time:start });
         }
     }
     resultList.sort((a, b) =>  b.value - a.value);
@@ -54,27 +64,37 @@ function distance_path(a, b) {
     else return path[0].length
 }
 
+
 function get_nearest_delivery_point_path(a) {
     let min= Number.MAX_VALUE;
-    let temp = Number.MAX_VALUE;
+    let temp_obj = null;
+    let temp_value = null;
     for (let delivery_point of map.delivery_tiles) {
-        temp = distance_path(a, delivery_point)
-        if (temp == null) continue;
-        if (temp < min) min = temp
+        temp_value = distance_path(a, delivery_point)
+        if (temp_value == null) continue;
+        if (temp_value < min){
+             min = temp_value
+             temp_obj = delivery_point;
+        }
     }
-    return min
+    return temp_obj
 }
+
+
 
 function get_nearest_delivery_point_manhattan(a) {
     let min= Number.MAX_VALUE;
-    let temp = Number.MAX_VALUE;
+    let temp_obj = null;
+    let temp_value = null;
     for (let delivery_point of map.delivery_tiles) {
-        temp = distance_manhattan(a, delivery_point)
-        console.log("DISTANCE PER PARCEL",min)
-        if (temp == null) continue;
-        if (temp < min) min = temp
+        temp_value = distance_manhattan(a, delivery_point)
+        if (temp_value == null) continue;
+        if (temp_value < min){
+             min = temp_value
+             temp_obj = delivery_point;
+        }
     }
-    return min
+    return temp_obj
 }
 
 function pathfind(start_pos, end_pos) {
@@ -194,7 +214,13 @@ client.onParcelsSensing( parcels => {
             if (!beliefSet_parcels.has(p.id)) {
                 p.viewable = true
                 beliefSet_parcels.set(p.id, p)
+            }else{
+                let el=beliefSet_parcels.get(p.id)
+                el.carriedBy = p.carriedBy
+                beliefSet_parcels.set(p.id,el)
+
             }
+
         }
         //update on all beliefs
         for (const p of beliefSet_parcels.values()) {
@@ -211,6 +237,7 @@ client.onParcelsSensing( parcels => {
             }
             else
                 beliefSet_parcels.set(p.id, p);
+
         }
 
         let printBelief = Array.from(beliefSet_parcels.values()).map(({ id, x, y, reward, time, viewable, carriedBy }) => {
@@ -220,7 +247,7 @@ client.onParcelsSensing( parcels => {
     }
     option_generation()
 })
-
+ const favorite_coordinates_history = new Map()
 function option_generation(){
         /**
      * Options generation
@@ -229,21 +256,20 @@ function option_generation(){
 
 
         for (const parcel of beliefSet_parcels.values()) {
-            console.log(parcel,me.id)
             if (!parcel.carriedBy) {
                 let distance = distance_path(me, parcel)
-                console.log("PATH DISTANCE", distance)
                 if (!distance) continue
-                let priority = parcel.reward - distance - get_nearest_delivery_point_manhattan(parcel)
+                let nearest_point = get_nearest_delivery_point_manhattan(parcel)
+                //console.log("nearest point",nearest_point)
+                if (!nearest_point) continue
+                let priority = parcel.reward - distance - distance_manhattan(parcel,nearest_point)
                 options.push(['go_pick_up', priority, parcel.x, parcel.y, parcel.id]);
-    
-    
             }
             else if (parcel.carriedBy == me.id) {
-                console.log("############")
-                let distance = get_nearest_delivery_point_path(parcel)
-                if (!distance) continue
-    
+                let nearest_point = get_nearest_delivery_point_path(parcel)
+                if (!nearest_point) continue
+                let distance = distance_path(parcel,nearest_point)
+                distance = map.width+map.height-distance
                 let already_present = false
                 for (let option of options) {
                     // se esiste l'opzione di consegnare, aggiungi reward alla prioditá
@@ -251,12 +277,15 @@ function option_generation(){
                         already_present = true
                         let priority = parcel.reward
                         option[1] = option[1] + priority
+                        option[2]= nearest_point.x
+                        option[3]= nearest_point.y
+
                         break
                     }
                 }
                 if (!already_present) {
                     let priority = parcel.reward - distance
-                    options.push(['go_deliver', priority, parcel.x, parcel.y, parcel.id]);
+                    options.push(['go_deliver', priority, nearest_point.x, nearest_point.y, parcel.id]);
     
                 }
             }
@@ -270,14 +299,37 @@ function option_generation(){
     
     
         let best_option;
-        let max_priority = 0;
-        console.log(options)
+        let max_priority = Number.MIN_SAFE_INTEGER;
+        if (options.length ==0){
+                for(let position of map.favorite_coordinates){
+                    let now
+                    if(position.time-Date.now()<500)continue;
+                    let distance = distance_manhattan(me,position)
+                    options.push(["go_to",position.x,position.y,position.value-distance])
+                }
+            
+        }
+        if (options.length ==0){
+            let position = map.favorite_coordinates[0]
+            let distance = distance_manhattan(me,position)
+
+                options.push(["go_to",position.x,position.y,position.value-distance])
+            }
+        
+
+        console.log("OPTIONS",options)
+
         for (const option of options) {
-            if (option[1] > max_priority) {
+            if (option[1] > max_priority & option[0]!="go_to") {
                 max_priority = option[1]
+                best_option = option
+            }else if (option[3] > max_priority & option[0]=="go_to") {
+                max_priority = option[3]
                 best_option = option
             }
         }
+
+
         /**
          * Best option is selected
          */
@@ -574,7 +626,9 @@ class Deliver extends Plan {
         if (this.stopped) throw ['stopped']; // if stopped then quit
         await this.subIntention(['go_to', x, y]);
         if (this.stopped) throw ['stopped']; // if stopped then quit
+        console.log("NON LASCIARMI")
         await client.putdown()
+        delete_put_down()
         if (this.stopped) throw ['stopped']; // if stopped then quit
         return true;
     }
@@ -591,33 +645,39 @@ class BlindMove extends Plan {
         console.log("ARGUMENTS", desire, x, y, id)
         console.log("starting movement to:xy", x, y);
         let path = pathfind(me, { x: x, y: y })
-        if (me.x == x && me.y == y) return;
-        while (me.x != x || me.y != y) {
-            console.log("POLLO")
-            if (this.stopped) throw ['stopped']; // if stopped then quit
+        console.log(path)
+        let step_counter = 1;
+        let grid = ut.generategrid(map, beliefSet_agents.values())
+        console.log(ut.printGridSEPath(grid,me,{ x: x, y: y },path))
 
-            let step_counter = 1;
+
+        while (me.x != x || me.y != y) {
+            let last_action = null
+            if (this.stopped) {
+                console.log("STOPPED")
+                throw ['stopped']; // if stopped then quit
+            }
+
             console.log("step_conter", step_counter)
             let status_x = undefined;
             let status_y = undefined;
 
-            console.log('me', me, 'xy', x, y);
 
-            if (path[step_counter][0] > me.x) {
-                status_x = await client.move('right')
-                console.log("right", path[step_counter], me)
-            }
-            else if (path[step_counter][0] < me.x) {
+            if (path[step_counter][0] < me.x) {
+                last_action = "left"
                 status_x = await client.move('left')
-                console.log('left', path[step_counter], me)
+            }
+            else if (path[step_counter][0] > me.x) {
+                last_action = "right"
+                status_x = await client.move('right')
             }
             else if (path[step_counter][1] > me.y) {
+                last_action = "up"
                 status_y = await client.move('up')
-                console.log('up', path[step_counter], me)
             }
             else if (path[step_counter][1] < me.y) {
+                last_action = "down"
                 status_y = await client.move('down')
-                console.log('down', path[step_counter], me)
             }
 
             if (status_x) {
@@ -632,6 +692,10 @@ class BlindMove extends Plan {
             console.log("statues", status_x, status_y)
 
             if (!status_x && !status_y) {
+                console.log("POLLO🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥")
+                console.log(desire,x,y,step_counter,path[step_counter],last_action,path)
+                console.log('me', me);
+
                 console.log('stucked')
                 break;
             } else if (me.x == x && me.y == y) {
@@ -645,7 +709,23 @@ class BlindMove extends Plan {
     }
 }
 
+class DropNow extends Plan {
+
+    static isApplicableTo(go_pick_up, x, y, id) {
+        return go_pick_up == 'drop_now';
+    }
+
+    async execute(go_pick_up, reward, x, y) {
+        if (this.stopped) throw ['stopped']; // if stopped then quit
+        await client.putdown()
+        if (this.stopped) throw ['stopped']; // if stopped then quit
+        return true;
+    }
+
+}
+
 // plan classes are added to plan library 
 planLibrary.push(GoPickUp)
 planLibrary.push(BlindMove)
 planLibrary.push(Deliver)
+planLibrary.push(DropNow)

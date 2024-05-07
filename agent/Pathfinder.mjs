@@ -3,9 +3,15 @@ import{Utilities as ut } from "./Utilities.js"
 
 export class Pathfinder {
   static aStar(grid, start, end) {
+
     const openSet = [start];
     const closedSet = new Set();
-    while (openSet.length > 0) {
+    if(grid[end.x][end.y]==1){
+      //console.log("Giá occupato",ut.printGridSE(grid,start,end))
+          return null
+    }
+    while (openSet.length > 0&&openSet.length<100) {
+      try{
       openSet.sort((a, b) => a.totalCost - b.totalCost);
       const currentNode = openSet.shift();
       if (currentNode.x === end.x && currentNode.y === end.y) {
@@ -25,7 +31,8 @@ export class Pathfinder {
           }
         }
       }
-    }
+    }catch(err){console.log(err)}
+  }
     return null; // No path found
   }
   static heuristic(node, goal) {
