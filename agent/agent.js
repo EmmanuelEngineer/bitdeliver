@@ -47,7 +47,7 @@ function generate_favorite_coordinates() {
         let y = tile.y;
         const key = `${x}_${y}`;
         const value = temporaryGridMap.get(key);
-        if (value !== undefined && value !== 0) {
+        if (value !== undefined && value > 4) {
             resultList.push({ x, y, value,time:start });
         }
     }
@@ -61,7 +61,7 @@ function distance_path(a, b) {
     let path = pathfind(a, b)
     if (path == null)
         return null
-    else return path[0].length
+    else return path.length
 }
 
 
@@ -113,13 +113,16 @@ let time = 0;
 const start = Date.now();
 
 const config = {}
+const decay_step = 0
+const decay_time = 1;
 client.onConfig((config_input) => {
     console.log("Config", config_input)
     client.onConfig(config_input => {
         config.AGENTS_OBSERVATION_DISTANCE = config_input.AGENTS_OBSERVATION_DISTANCE;
         config.PARCELS_OBSERVATION_DISTANCE = config_input.PARCELS_OBSERVATION_DISTANCE;
-
-    })
+        config.PARCEL_DECADING_INTERVAL = config_input.PARCEL_DECADING_INTERVAL;
+        if(config.PARCEL_DECADING_INTERVAL =="infinite") decay_step = 0
+        else decay_time= parseInt(config.PARCEL_DECADING_INTERVAL.match(/\d+(\.\d+)?/)[0])})
 })
 
 const map = {};
@@ -226,8 +229,8 @@ client.onParcelsSensing( parcels => {
         for (const p of beliefSet_parcels.values()) {
             //viewable
             (distance_manhattan(me, p) > config.PARCELS_OBSERVATION_DISTANCE) ? p.viewable = false : p.viewable = true
-            if (Date.now() - p.time > 1000) {
-                p.reward = p.reward - 1
+            if (Date.now() - p.time > decay_time*1000) {
+                p.reward = p.reward - decay_step;
                 p.time = Date.now()
             }
 
@@ -302,14 +305,20 @@ function option_generation(){
         let max_priority = Number.MIN_SAFE_INTEGER;
         if (options.length ==0){
                 for(let position of map.favorite_coordinates){
-                    let now
-                    if(position.time-Date.now()<500)continue;
-                    let distance = distance_manhattan(me,position)
-                    options.push(["go_to",position.x,position.y,position.value-distance])
+                    if(me.x==position.x&& me.y == position.y){
+                        position.time = Date.now()
+                    }
+                    console.log(position, Date.now()-position.time)
+                    if(Date.now()-position.time>5000){
+                        let distance = distance_manhattan(me,position)
+                        options.push(["go_to",position.x,position.y,position.value-distance])
+                    }
                 }
             
         }
         if (options.length ==0){
+
+            console.log("NON ESISTE NIENTE")
             let position = map.favorite_coordinates[0]
             let distance = distance_manhattan(me,position)
 
@@ -387,6 +396,9 @@ class IntentionRevision {
 
                 // Remove from the queue
                 this.intention_queue.shift();
+            }else{
+                if(map.favorite_coordinates)
+                    option_generation()
             }
             // Postpone next iteration at setImmediate
             await new Promise(res => setImmediate(res));
@@ -646,6 +658,7 @@ class BlindMove extends Plan {
         console.log("starting movement to:xy", x, y);
         let path = pathfind(me, { x: x, y: y })
         console.log(path)
+        if(path== null) return
         let step_counter = 1;
         let grid = ut.generategrid(map, beliefSet_agents.values())
         console.log(ut.printGridSEPath(grid,me,{ x: x, y: y },path))

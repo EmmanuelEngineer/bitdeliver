@@ -39,12 +39,12 @@ export class Utilities {
     return string
   }
 
-  static printGridSEPath(grid, start, end,path) {
+  static printGridSEPath(grid, start, end, path) {
     //console.log("START",start,"END",end)
     let string = ""
     let copy = JSON.parse(JSON.stringify(grid));
-    for(let x of path){
-      copy[x[0]][x[1]]=5
+    for (let x of path) {
+      copy[x[0]][x[1]] = 5
     }
     copy[start.x][start.y] = 3
     copy[end.x][end.y] = 4
@@ -123,7 +123,8 @@ export class Utilities {
     for (let agent of agents) {
       if (agent == undefined) break
       try {
-        grid[Math.round(agent.x)][Math.round(agent.y)] = 1;
+        if (agent.action != "lost")
+          grid[Math.round(agent.x)][Math.round(agent.y)] = 1;
       } catch (err) { console.log("AAAAAAAAAAAAAAAAAAAAAAAA", err) }
     }
     return grid;
