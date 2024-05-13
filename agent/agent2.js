@@ -341,7 +341,7 @@ function option_generation(x){             //??? migliorare percorsi
                 continue;
             }
             if(decay_time){
-                var priority = parcel.reward + parcels_on_me_reward - ((distance_percel+nearest_delivery_point.distance)*(parcels_on_me_counter+1))/(3*decay_time);
+                var priority = parcel.reward + parcels_on_me_reward - ((distance_percel+nearest_delivery_point.distance)*(parcels_on_me_counter+1))/(4*decay_time);
             }
             else{
                 var priority = parcel.reward + parcels_on_me_reward - 2* parcels_on_me_counter;
@@ -354,7 +354,7 @@ function option_generation(x){             //??? migliorare percorsi
                     if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find path to delivery");
                     continue;
                 }
-                priority = parcels_on_me_reward + parcel.reward - ((parcels_on_me_counter+1)*distance_delivery+nearest_delivery_point.distance*2)/(3*decay_time);
+                priority = parcels_on_me_reward + parcel.reward - ((parcels_on_me_counter+1)*distance_delivery+nearest_delivery_point.distance*2)/(4*decay_time);
                 options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
             }
         }
@@ -388,7 +388,7 @@ function option_generation(x){             //??? migliorare percorsi
         else{
             let distance = nearest_delivery_point.distance;//distance_path(me, nearest_delivery_point_delivery);
             if(decay_time){
-                var priority = parcels_on_me_reward - (parcels_on_me_counter*distance)/(3*decay_time);
+                var priority = parcels_on_me_reward - (parcels_on_me_counter*distance)/(4*decay_time);
             }
             else{
                 var priority = parcels_on_me_reward;
@@ -414,7 +414,7 @@ function option_generation(x){             //??? migliorare percorsi
                 }
                 //if(logs) console.log(position, Date.now()-position.time,config.MOVEMENT_DURATION)
                 if(Date.now()-position.time>max_time){
-                    let distance = distance_manhattan(me,position);
+                    let distance = distance_path(me,position);
                     //if(logs) console.log("##########################",me,position,distance)
                     if(distance){
                         options.push(["go_to",position.value-distance,position.x,position.y]);
@@ -785,7 +785,7 @@ class GoTo extends Plan {
 
             // Imposta un timeout di 1 secondo
             const timeoutPromise = new Promise((resolve) => {
-                setTimeout(resolve, 1000); // Timeout dopo 1 secondo
+                setTimeout(resolve, 400); // Timeout dopo 1 secondo
             });
 
             // Attendi il completamento di tutte le chiamate di movimento o il timeout
