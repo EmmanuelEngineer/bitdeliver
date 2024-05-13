@@ -239,7 +239,7 @@ client.onAgentsSensing( (agents) => { //intanto no memoria sugli agenti
  * Options generation and filtering function
  */
 client.onParcelsSensing( parcels => {
-    if ((parcels != undefined)&&(parcels.length!=0)) {
+    if ((parcels != undefined)&&(parcels.length!=0)){
         //if(logs) console.log(colors.yellow + "[onParcels]" +resetColor+ "parcels_sensing");
         time = Date.now() - start;
 
@@ -329,13 +329,13 @@ function option_generation(x){             //??? migliorare percorsi
         if (parcel.carriedBy == me.id){
             continue;
         }
-        if (!parcel.carriedBy) {
+        if (!parcel.carriedBy){
             let distance_percel = distance_path(me, parcel);
             if (!distance_percel){
                 if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find path to", parcel);
                 continue;
             }
-            nearest_delivery_point = get_nearest_delivery_point_path(parcel);  //???to optimize the return (add distance)
+            nearest_delivery_point = get_nearest_delivery_point_path(parcel);
             if (!nearest_delivery_point){
                 if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find nearest delivery point to", parcel);
                 continue;
@@ -344,7 +344,7 @@ function option_generation(x){             //??? migliorare percorsi
                 var priority = parcel.reward + parcels_on_me_reward - ((distance_percel+nearest_delivery_point.distance)*(parcels_on_me_counter+1))/(4*decay_time);
             }
             else{
-                var priority = parcel.reward + parcels_on_me_reward - 2* parcels_on_me_counter;
+                var priority = parcel.reward + parcels_on_me_reward - 2* parcels_on_me_counter; //??? check
             }
             options.push(['go_pick_up', priority, parcel.x, parcel.y]);
 
@@ -714,8 +714,8 @@ class GoPickUp extends Plan {
         await this.subIntention(['go_to', priority, x, y]);
         if (this.stopped) throw ['stopped']; // if stopped then quit
         await client.pickup();
-        await new Promise(res => setImmediate(res));
-        delete_parcels_here();
+        await new Promise(res => setImmediate(res)); //??? check
+        //delete_parcels_here(); //??? check
         if (this.stopped) throw ['stopped']; // if stopped then quit
         return true;
     }
@@ -756,8 +756,8 @@ class GoTo extends Plan {
         let step_counter = 1;
         //let grid = ut.generategrid(map, beliefSet_agents.values())
         //if(logs) console.log(ut.printGridSEPath(grid,me,{ x: x, y: y },path))
-
-        while (me.x != x || me.y != y){
+        let counter=0;
+        while(me.x != x || me.y != y){
             let last_action = null //to_remove
             if (this.stopped) {
                 if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STOPPED");
@@ -790,8 +790,12 @@ class GoTo extends Plan {
 
             // Attendi il completamento di tutte le chiamate di movimento o il timeout
             await Promise.race([...movePromises, timeoutPromise]);
-
-            if((me.x==me_tmp.x)&&(me.y==me_tmp.y)){
+            if((me.x==me_tmp.x)&&(me.y==me_tmp.y)&&(counter<3)){
+                if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> retrying");
+                counter++;
+                continue;
+            }
+            else if(counter==3){
                 if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STUCKED");
                 throw [colors.green + "[plan]" +resetColor+ 'stucked'];
             }
