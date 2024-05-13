@@ -3,14 +3,14 @@ import{Utilities as ut } from "./Utilities.js"
 
 export class Pathfinder {
   static aStar(grid, start, end) {
-
+   // console.log(grid)
     const openSet = [start];
     const closedSet = new Set();
     if(grid[end.x][end.y]==1){
       //console.log("Giá occupato",ut.printGridSE(grid,start,end))
           return null
     }
-    while (openSet.length > 0&&openSet.length<1000) {
+    while (openSet.length > 0) {
       try{
       openSet.sort((a, b) => a.totalCost - b.totalCost);
       const currentNode = openSet.shift();
@@ -20,13 +20,16 @@ export class Pathfinder {
       closedSet.add(currentNode);
       const neighbors = this.getNeighbors(grid, currentNode);
       for (const neighbor of neighbors) {
-        if (closedSet.has(neighbor)) continue;
+        //if (closedSet.has(neighbor)) continue;
+        for(let setObj of closedSet){
+          if(setObj.x == neighbor.x && setObj.y == neighbor.y) continue
+        }
         const tentativeCost = currentNode.cost + 1;
-        if (!openSet.includes(neighbor) || tentativeCost < neighbor.cost) {
+        if (!this.hasThing(openSet,neighbor) || tentativeCost < neighbor.cost) {
           neighbor.cost = tentativeCost;
           neighbor.heuristic = Pathfinder.heuristic(neighbor, end);
           neighbor.parent = currentNode;
-          if (!openSet.includes(neighbor)) {
+          if (!this.hasThing(openSet,neighbor)) {
             openSet.push(neighbor);
           }
         }
@@ -34,6 +37,16 @@ export class Pathfinder {
     }catch(err){console.log(err)}
   }
     return null; // No path found
+  }
+
+  static hasThing(set,node){
+    let flag = false
+    for(let setObj of set){
+      if(setObj.x == node.x && setObj.y == node.y) {
+        flag = true
+      }
+    }
+    return flag
   }
   static heuristic(node, goal) {
     // Euclidean distance heuristic

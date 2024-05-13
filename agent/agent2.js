@@ -8,7 +8,7 @@ const logs = true;
     aggiungere i posti di default,
   */
 const client = new DeliverooApi(
-    'http://localhost:8080?name=ddos'+ Date.now(),
+    'https://deliveroojs2.onrender.com/?name=emmavico',
     ''
 )
 
@@ -83,14 +83,15 @@ function get_nearest_delivery_point_path(a) {
 
 function pathfind(start_pos, end_pos) {
     let grid = ut.generategrid(map, beliefSet_agents.values())
+    //console.log(start_pos,end_pos)
     //if(logs) console.log(ut.printGridSE(grid,start_pos,end_pos))
     let start = new Node(Math.round(start_pos.x), Math.round(start_pos.y), 0, 0);
     let end = new Node(Math.round(end_pos.x), Math.round(end_pos.y), 0, 0);
     let path = Pathfinder.aStar(grid, start, end);
+
     //if(logs) console.log("Shortest Path:", path);
     return path;
 }
-
 
 let beliefSet_agents = new Map();
 let beliefSet_parcels = new Map();
@@ -344,7 +345,7 @@ function option_generation(x){             //??? migliorare percorsi
                 var priority = parcel.reward + parcels_on_me_reward - ((distance_percel+nearest_delivery_point.distance)*(parcels_on_me_counter+1))/(4*decay_time);
             }
             else{
-                var priority = parcel.reward + parcels_on_me_reward - 2* parcels_on_me_counter; //??? check
+                var priority = parcel.reward + parcels_on_me_reward - 2* parcels_on_me_counter;
             }
             options.push(['go_pick_up', priority, parcel.x, parcel.y]);
 
@@ -409,6 +410,9 @@ function option_generation(x){             //??? migliorare percorsi
             if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "no option");
             //let time = config.MOVEMENT_DURATION*map.favorite_coordinates.length;
             for(let position of map.favorite_coordinates){
+                if(distance_manhattan(me,position)>10){
+                    continue;
+                }
                 if(me.x==position.x&& me.y == position.y){
                     position.time = Date.now();
                 }
@@ -714,8 +718,8 @@ class GoPickUp extends Plan {
         await this.subIntention(['go_to', priority, x, y]);
         if (this.stopped) throw ['stopped']; // if stopped then quit
         await client.pickup();
-        await new Promise(res => setImmediate(res)); //??? check
-        //delete_parcels_here(); //??? check
+        //await new Promise((resolve) => {setTimeout(resolve, 300)});
+        delete_parcels_here(); // if the beliefset is not update remove the phantom parcel
         if (this.stopped) throw ['stopped']; // if stopped then quit
         return true;
     }
@@ -751,7 +755,7 @@ class GoTo extends Plan {
         //console.log(path)
         if(path == null){
             if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> path null");
-            throw [colors.green + "[plan]" +resetColor+ 'failed (no path found)'];
+            throw ['failed (no path found)'];
         }
         let step_counter = 1;
         //let grid = ut.generategrid(map, beliefSet_agents.values())
@@ -764,32 +768,23 @@ class GoTo extends Plan {
                 throw ['stopped'];
             }
 
-            const movePromises = [];
             let me_tmp = { x: me.x, y: me.y };
             if(path[step_counter][0] < me.x){
                 last_action = "left";
-                movePromises.push(client.move('left'));
+                await client.move('left');
             }
             else if (path[step_counter][0] > me.x){
                 last_action = "right";
-                movePromises.push(client.move('right'));
+                await client.move('right');
             }
             else if (path[step_counter][1] > me.y){
                 last_action = "up";
-                movePromises.push(client.move('up'));
+                await client.move('up');
             }
             else if (path[step_counter][1] < me.y){
                 last_action = "down";
-                movePromises.push(client.move('down'));
+                await client.move('down');
             }
-
-            // Imposta un timeout di 1 secondo
-            const timeoutPromise = new Promise((resolve) => {
-                setTimeout(resolve, 400); // Timeout dopo 1 secondo
-            });
-
-            // Attendi il completamento di tutte le chiamate di movimento o il timeout
-            await Promise.race([...movePromises, timeoutPromise]);
             if((me.x==me_tmp.x)&&(me.y==me_tmp.y)&&(counter<3)){
                 if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> retrying");
                 counter++;
