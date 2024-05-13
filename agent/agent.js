@@ -7,8 +7,10 @@ import{Utilities as ut } from "./Utilities.js"
     aggiungere i posti di default,
   */
 const client = new DeliverooApi(
-    'http://localhost:8080',
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImY4OTAwZWE1NmViIiwibmFtZSI6ImVtbWF2aWNvIiwiaWF0IjoxNzE0NTY4Mjc0fQ.Lr_L4aaiIVss76T0QZuFiS950lIaVsRXsK7W80h8hMs'
+    //'https://deliveroojs2.onrender.com/',
+    //'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImNjZjhhYjRmODNiIiwibmFtZSI6ImJpdGRlbGl2ZXIiLCJpYXQiOjE3MTUwNzg3MjR9.BBzqyhfVvay5uvYDg--jsgkR7tmEUcANM3ErXSYKHvw'
+    "http://rtibdi.disi.unitn.it:8080/",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImFlYmNjYjUxZjE3IiwibmFtZSI6ImVtbWF2aWNvIiwiaWF0IjoxNzE1MTU5MjE5fQ._qWTNNFNOFB8RbmNQMEtdcGN5GeHxQj-73hJaSN58ow"
 )
 var deliver_multiplier = 5
 function distance_manhattan(a,b) {
@@ -25,7 +27,6 @@ function delete_put_down(){
             beliefSet_parcels.delete(p.id)
         }
     }
-
 }
 function generate_favorite_coordinates() {
     const temporaryGridMap = new Map();
@@ -48,7 +49,7 @@ function generate_favorite_coordinates() {
         let y = tile.y;
         const key = `${x}_${y}`;
         const value = temporaryGridMap.get(key);
-        if (value !== undefined && value > 4) {
+        if (value !== undefined && value > 0) {
             resultList.push({ x, y, value,time:start-max_time });
         }
     }
@@ -146,6 +147,7 @@ client.onMap((width, height, tiles) => {
     map.spawnable_tiles = spawnable_tiles;
     console.log("CARATTERISTICHE MAPPA", width, height, tiles)
     max_time = map.width*map.height*config.MOVEMENT_DURATION/10
+    if(max_time<3000) max_time = 3000
     map.favorite_coordinates = generate_favorite_coordinates()
     //console.log(map.favorite_coordinates)
 })
@@ -220,12 +222,16 @@ client.onParcelsSensing( parcels => {
             //compute direction
             if (!beliefSet_parcels.has(p.id)) {
                 p.viewable = true
-                beliefSet_parcels.set(p.id, p)
-            }else{
+                p.first_seen = time
+                beliefSet_parcels.set(p.id, p)//rimozione se vedo che è stato preso
+            }else if (beliefSet_parcels.has(p.id)&& p.carriedBy!=me.id){
+                let el=beliefSet_parcels.get(p.id)
+                beliefSet_parcels.delete(p.id)
+
+            }else if(beliefSet_parcels.has(p.id)&& p.carriedBy===me.id){
                 let el=beliefSet_parcels.get(p.id)
                 el.carriedBy = p.carriedBy
                 beliefSet_parcels.set(p.id,el)
-
             }
 
         }
@@ -233,6 +239,7 @@ client.onParcelsSensing( parcels => {
         for (const p of beliefSet_parcels.values()) {
             //viewable
             (distance_manhattan(me, p) > config.PARCELS_OBSERVATION_DISTANCE) ? p.viewable = false : p.viewable = true
+            if(Date.now()-p.first_seen > 100*max_time/2)
             if (Date.now() - p.time > decay_time*1000) {
                 p.reward = p.reward - decay_step;
                 p.time = Date.now()
@@ -283,7 +290,7 @@ function option_generation(){
                     if (option[0] == "go_deliver") {
                         already_present = true
                         let priority = parcel.reward
-                        option[1] = option[1] + priority
+                        option[1] = option[1] + priority+10
                         option[2]= nearest_point.x
                         option[3]= nearest_point.y
 
@@ -328,12 +335,12 @@ function option_generation(){
             let distance = distance_manhattan(me,position)
 
                 options.push(["go_to",position.x,position.y,position.value-distance])
-            }
+                            }
         
 
         console.log("OPTIONS",options)
         let max_priority = Number.MIN_SAFE_INTEGER;
-
+            
         for (const option of options) {
             //console.log(option)
             if (option[1] > max_priority && option[0]!="go_to") {
