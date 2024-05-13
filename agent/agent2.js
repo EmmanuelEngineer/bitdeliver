@@ -355,6 +355,7 @@ function option_generation(x){             //??? migliorare percorsi
                     continue;
                 }
                 priority = parcels_on_me_reward + parcel.reward - ((parcels_on_me_counter+1)*distance_delivery+nearest_delivery_point.distance*2)/(3*decay_time);
+                options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
             }
         }
         /*else if (parcel.carriedBy == me.id){
