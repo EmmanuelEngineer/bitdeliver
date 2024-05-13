@@ -8,8 +8,8 @@ const logs = true;
     aggiungere i posti di default,
   */
 const client = new DeliverooApi(
-    'http://localhost:8080',
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjAzYmZhOTY0MjU4IiwibmFtZSI6IlRyZXR0ZWwiLCJpYXQiOjE3MTM5NDkzMDN9.E-R5IWduQfdGcHRexApoXYAziuWiuhZ1la7jmJ9l8m8'
+    'http://localhost:8080?name=ddos'+ Date.now(),
+    ''
 )
 
 //???-migliorare maxValue
