@@ -6,7 +6,7 @@ function spawnProcesses() {
     
     for (let i = 0; i < 10; i++) {
         const childProcess = spawn(
-            'node agent.js',
+            'node agent2.js',
             { shell: true }
         );
 

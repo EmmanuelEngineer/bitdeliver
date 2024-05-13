@@ -25,11 +25,12 @@ export class Pathfinder {
           if(setObj.x == neighbor.x && setObj.y == neighbor.y) continue
         }
         const tentativeCost = currentNode.cost + 1;
-        if (!this.hasThing(openSet,neighbor) || tentativeCost < neighbor.cost) {
+        let flag = !this.hasThing(openSet,neighbor)
+        if (flag || tentativeCost < neighbor.cost) {
           neighbor.cost = tentativeCost;
           neighbor.heuristic = Pathfinder.heuristic(neighbor, end);
           neighbor.parent = currentNode;
-          if (!this.hasThing(openSet,neighbor)) {
+          if (flag) {
             openSet.push(neighbor);
           }
         }
