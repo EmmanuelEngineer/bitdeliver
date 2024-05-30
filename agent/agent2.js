@@ -1,6 +1,6 @@
 import { DeliverooApi } from "@unitn-asa/deliveroo-js-client";
 import { Pathfinder, Node } from './Pathfinder.mjs';
-import{Utilities as ut } from "./Utilities.js"
+import { Utilities as ut } from "./Utilities.js"
 
 const logs = true;
 /* 
@@ -8,7 +8,7 @@ const logs = true;
     aggiungere i posti di default,
   */
 const client = new DeliverooApi(
-    'https://deliveroojs2.onrender.com/?name=emmavico',
+    'http://localhost:8080/?name=bitdeliver',
     ''
 )
 
@@ -35,20 +35,20 @@ function generate_favorite_coordinates() {
     const resultList = [];
 
     for (let tile of map.spawnable_tiles) {
-        
+
         let x = tile.x;
         let y = tile.y;
         const key = `${x}_${y}`;
         const value = temporaryGridMap.get(key);
-        if (value !== undefined && value > maxValue/2) {
-            resultList.push({ x, y, value,time:start-max_time});
+        if (value !== undefined && value > maxValue / 2) {
+            resultList.push({ x, y, value, time: start - max_time });
         }
     }
-    resultList.sort((a, b) =>  b.value - a.value);
+    resultList.sort((a, b) => b.value - a.value);
     return resultList;
 }
 
-function distance_manhattan(a,b) {
+function distance_manhattan(a, b) {
     const dx = Math.abs(Math.round(a.x) - Math.round(b.x))
     const dy = Math.abs(Math.round(a.y) - Math.round(b.y))
     return dx + dy;
@@ -69,7 +69,7 @@ function get_nearest_delivery_point_path(a) {
     for (let delivery_point of map.delivery_tiles) {
         distance = distance_path(a, delivery_point);
         if (distance == null) continue;
-        if (distance < min){
+        if (distance < min) {
             min = distance;
             nearest_point = {
                 x: delivery_point.x,
@@ -108,15 +108,15 @@ client.onConfig((config_input) => {
     config.PARCELS_OBSERVATION_DISTANCE = config_input.PARCELS_OBSERVATION_DISTANCE;
     config.PARCEL_DECADING_INTERVAL = config_input.PARCEL_DECADING_INTERVAL;
     config.MOVEMENT_DURATION = config_input.MOVEMENT_DURATION
-    if(config.PARCEL_DECADING_INTERVAL =="infinite") decay_time = 0;
-    else decay_time= parseInt(config.PARCEL_DECADING_INTERVAL.match(/\d+(\.\d+)?/)[0])*1000;
+    if (config.PARCEL_DECADING_INTERVAL == "infinite") decay_time = 0;
+    else decay_time = parseInt(config.PARCEL_DECADING_INTERVAL.match(/\d+(\.\d+)?/)[0]) * 1000;
     //if(logs) console.log(config.MOVEMENT_DURATION);
 })
 
-function delete_put_down(){
+function delete_put_down() {
     const idsToDelete = [];
     for (const p of beliefSet_parcels.values()) {
-        if (p.carriedBy == me.id){
+        if (p.carriedBy == me.id) {
             idsToDelete.push(p.id);
         }
     }
@@ -125,10 +125,10 @@ function delete_put_down(){
     }
 }
 
-function delete_parcels_here(){
+function delete_parcels_here() {
     const idsToDelete = [];
     for (const p of beliefSet_parcels.values()) {
-        if ((p.carriedBy!=me.id)&&(p.x==me.x)&&(p.y==me.y)){
+        if ((p.carriedBy != me.id) && (p.x == me.x) && (p.y == me.y)) {
             idsToDelete.push(p.id);
         }
     }
@@ -152,6 +152,7 @@ const resetColor = '\x1b[0m';
 
 
 const map = {};
+var delivery_grid = []//used for quick reference for when i pass on a delivery point
 var max_time = 1000;
 client.onMap((width, height, tiles) => {
     //if(logs) console.log(colors.yellow + "[onMap]" +resetColor+ " receiving map");
@@ -169,10 +170,14 @@ client.onMap((width, height, tiles) => {
     map.spawnable_tiles = spawnable_tiles;
 
     //if(logs) console.log("CARATTERISTICHE MAPPA", width, height, tiles);
-    max_time = map.width*map.height*config.MOVEMENT_DURATION/10;
-    if(max_time<3000) max_time=3000;
+    max_time = map.width * map.height * config.MOVEMENT_DURATION / 10;
+    if (max_time < 3000) max_time = 3000;
     map.favorite_coordinates = generate_favorite_coordinates();
-    if(logs) console.log(map.favorite_coordinates);
+    if (logs) console.log(map.favorite_coordinates);
+    delivery_grid = Array.from({ length: map.height }, () => Array(map.width).fill(false))
+    for (const tile of map.delivery_tiles) {
+        delivery_grid[tile.x][tile.y] = true;
+    }
 })
 
 
@@ -192,9 +197,9 @@ client.onYou(({ id, name, x, y, score }) => {
 
 
 
-client.onAgentsSensing( (agents) => { //intanto no memoria sugli agenti
-    if ((agents != undefined)&&(agents.length!=0)) {
-        if(logs) console.log(colors.yellow + "[onAgents]" +resetColor+ "agent_sensing");
+client.onAgentsSensing(async (agents) => { //intanto no memoria sugli agenti
+    if ((agents != undefined) && (agents.length != 0)) {
+        if (logs) console.log(colors.yellow + "[onAgents]" + resetColor + "agent_sensing");
         beliefSet_agents = new Map();
         //time = Date.now() - start;
         for (let a of agents) {
@@ -219,18 +224,18 @@ client.onAgentsSensing( (agents) => { //intanto no memoria sugli agenti
 
 
             //update on all beliefs
-            /*
+            
             for (const [key, a] of beliefSet_agents) {
                 //viewable
                 (distance_manhattan(me, a) > config.AGENTS_OBSERVATION_DISTANCE) ? a.viewable = false : a.viewable = true
                 if (!a.viewable & Date.now() - a.time > 100) a.action = "lost"
                 beliefSet_agents.set(a.id, a);
-            }*/
+            }
         }
-        let printBelief = Array.from(beliefSet_agents.values()).map(({ id, name, x, y}) => {
+        let printBelief = Array.from(beliefSet_agents.values()).map(({ id, name, x, y }) => {
             return `${name}:${x},${y}\n`;
         }).join(' ');
-        if(logs) console.log(colors.yellow + "[onAgents]" +resetColor+ "memory agents:\n" + printBelief);
+        if (logs) console.log(colors.yellow + "[onAgents]" + resetColor + "memory agents:\n" + printBelief);
         option_generation(1);
     }
 })
@@ -239,53 +244,48 @@ client.onAgentsSensing( (agents) => { //intanto no memoria sugli agenti
 /**
  * Options generation and filtering function
  */
-client.onParcelsSensing( parcels => {
-    if ((parcels != undefined)&&(parcels.length!=0)){
+var parcel_grid = []
+client.onParcelsSensing(async parcels => {
+    parcel_grid = Array.from({ length: map.height }, () => Array(map.width).fill(false));
+    if ((parcels != undefined) && (parcels.length != 0)) {
         //if(logs) console.log(colors.yellow + "[onParcels]" +resetColor+ "parcels_sensing");
         time = Date.now() - start;
 
-        for (let p of parcels){
-            if((!p.carriedBy)||p.carriedBy==me.id){
+        for (let p of parcels) {
+            if ((!p.carriedBy) || p.carriedBy == me.id) {
                 p.time = time;
                 beliefSet_parcels.set(p.id, p);
             }
-            //compute direction
-            /*if ((!beliefSet_parcels.has(p.id))&&(!p.carriedBy)){
-                //p.viewable = true
-                beliefSet_parcels.set(p.id, p);
-            }
-            else if(p.carriedBy == me.id){
-                let el=beliefSet_parcels.get(p.id);
-                el.carriedBy = p.carriedBy;
-                beliefSet_parcels.set(p.id,el);
-            }*/
         }
         const idsToDelete = [];
-        for(const p of beliefSet_parcels.values()){
-            if(p.reward<2){
-                if(logs) console.log(colors.yellow + "[onParcels]" +resetColor+ "delete parcel memory (expired nearby):", p);
+        for (const p of beliefSet_parcels.values()) {
+            if (p.reward < 2) {
+                if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (expired nearby):", p);
                 idsToDelete.push(p.id);
             }
-            else if((p.carriedBy)&&(p.carriedBy !== me.id)){
-                if(logs) console.log(colors.yellow + "[onParcels]" +resetColor+ "delete parcel memory (carried):", p);
+            else if ((p.carriedBy) && (p.carriedBy !== me.id)) {
+                if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (carried):", p);
                 idsToDelete.push(p.id);
             }
-            else if(!parcels.some(parcel => parcel.id === p.id)){
-                if(distance_manhattan(me,p)<=config.PARCELS_OBSERVATION_DISTANCE){
-                    if(logs) console.log(colors.yellow + "[onParcels]" +resetColor+ "delete parcel memory (lost track):", p);
+            else if (!parcels.some(parcel => parcel.id === p.id)) {
+                if (distance_manhattan(me, p) <= config.PARCELS_OBSERVATION_DISTANCE) {
+                    if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (lost track):", p);
                     idsToDelete.push(p.id);
                 }
-                else if(Date.now() - p.time > decay_time) {
-                    p.reward -= Math.floor((Date.now()-p.time)/decay_time);
-                    if(p.reward > 2){
+                else if (Date.now() - p.time > decay_time) {
+                    p.reward -= Math.floor((Date.now() - p.time) / decay_time);
+                    if (p.reward > 2) {
                         p.time = Date.now();
                         beliefSet_parcels.set(p.id, p);
                     }
-                    else{
-                        if(logs) console.log(colors.yellow + "[onParcels]" +resetColor+ "delete parcel memory (expired somewhere):", p);
+                    else {
+                        if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (expired somewhere):", p);
                         idsToDelete.push(p.id);
                     }
                 }
+            }
+            if (!p.carriedBy) {
+                parcel_grid[p.x][p.y] = true;
             }
         }
         for (const id of idsToDelete) {
@@ -294,21 +294,21 @@ client.onParcelsSensing( parcels => {
         let printBelief = Array.from(beliefSet_parcels.values()).map(({ id, x, y, reward, time, carriedBy }) => {
             return `${id}:${x},${y},${reward},${time},${carriedBy}\n`;
         }).join(' ');
-        if(logs) console.log(colors.yellow + "[onParcels]" +resetColor+ "parcel_memory:\n" + printBelief);
+        if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "parcel_memory:\n" + printBelief);
         option_generation(2);
     }
 })
 
-function option_generation(x){             //??? migliorare percorsi
-    if(logs){
-        if(x==1){
-            console.log(colors.blue + "[opt_gen]" +resetColor+ "agents call");
+async function option_generation(x) {             //??? migliorare percorsi
+    if (logs) {
+        if (x == 1) {
+            console.log(colors.blue + "[opt_gen]" + resetColor + "agents call");
         }
-        else if(x==2){
-            console.log(colors.blue + "[opt_gen]" +resetColor+ "parcels call");
+        else if (x == 2) {
+            console.log(colors.blue + "[opt_gen]" + resetColor + "parcels call");
         }
-        else if(x==3){
-            console.log(colors.blue + "[opt_gen]" +resetColor+ "main loop call");
+        else if (x == 3) {
+            console.log(colors.blue + "[opt_gen]" + resetColor + "main loop call");
         }
     }
     /**
@@ -320,42 +320,42 @@ function option_generation(x){             //??? migliorare percorsi
     let nearest_delivery_point;
     let parcels_on_me_counter = 0;
     let parcels_on_me_reward = 0;
-    for (const parcel of beliefSet_parcels.values()){
-        if(parcel.carriedBy == me.id){
+    for (const parcel of beliefSet_parcels.values()) {
+        if (parcel.carriedBy == me.id) {
             parcels_on_me_reward += parcel.reward;
             parcels_on_me_counter += 1;
         }
     }
-    for (const parcel of beliefSet_parcels.values()){
-        if (parcel.carriedBy == me.id){
+    for (const parcel of beliefSet_parcels.values()) {
+        if (parcel.carriedBy == me.id) {
             continue;
         }
-        if (!parcel.carriedBy){
+        if (!parcel.carriedBy) {
             let distance_percel = distance_path(me, parcel);
-            if (!distance_percel){
-                if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find path to", parcel);
+            if (!distance_percel) {
+                if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find path to", parcel);
                 continue;
             }
             nearest_delivery_point = get_nearest_delivery_point_path(parcel);
-            if (!nearest_delivery_point){
-                if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find nearest delivery point to", parcel);
+            if (!nearest_delivery_point) {
+                if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find nearest delivery point to", parcel);
                 continue;
             }
-            if(decay_time){
-                var priority = parcel.reward + parcels_on_me_reward - ((distance_percel+nearest_delivery_point.distance)*(parcels_on_me_counter+1))/(4*decay_time);
+            if (decay_time) {
+                var priority = parcel.reward + parcels_on_me_reward - ((distance_percel + nearest_delivery_point.distance) * (parcels_on_me_counter + 1)) / (4 * decay_time);
             }
-            else{
-                var priority = parcel.reward + parcels_on_me_reward - 2* parcels_on_me_counter;
+            else {
+                var priority = parcel.reward + parcels_on_me_reward - 2 * parcels_on_me_counter;
             }
             options.push(['go_pick_up', priority, parcel.x, parcel.y]);
 
-            if(parcels_on_me_counter){ //second option
+            if (parcels_on_me_counter) { //second option
                 let distance_delivery = distance_path(me, nearest_delivery_point);
-                if(!distance_delivery){
-                    if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find path to delivery");
+                if (!distance_delivery) {
+                    if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find path to delivery");
                     continue;
                 }
-                priority = parcels_on_me_reward + parcel.reward - ((parcels_on_me_counter+1)*distance_delivery+nearest_delivery_point.distance*2)/(4*decay_time);
+                priority = parcels_on_me_reward + parcel.reward - ((parcels_on_me_counter + 1) * distance_delivery + nearest_delivery_point.distance * 2) / (4 * decay_time);
                 options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
             }
         }
@@ -376,22 +376,21 @@ function option_generation(x){             //??? migliorare percorsi
                 delivery_priority += parcel.reward;
             }
         }*/
-        else{
-            if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "something enexpected happend while generating options");
-            while(1); //to remove
+        else {
+            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "something enexpected happend while generating options");
         }
     }
-    if(parcels_on_me_counter){
+    if (parcels_on_me_counter) {
         nearest_delivery_point = get_nearest_delivery_point_path(me);
-        if (!nearest_delivery_point){
-            if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find nearest delivery point to", parcel);
+        if (!nearest_delivery_point) {
+            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find nearest delivery point to", parcel);
         }
-        else{
+        else {
             let distance = nearest_delivery_point.distance;//distance_path(me, nearest_delivery_point_delivery);
-            if(decay_time){
-                var priority = parcels_on_me_reward - (parcels_on_me_counter*distance)/(4*decay_time);
+            if (decay_time) {
+                var priority = parcels_on_me_reward - (parcels_on_me_counter * distance) / (4 * decay_time);
             }
-            else{
+            else {
                 var priority = parcels_on_me_reward;
             }
             options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
@@ -405,25 +404,32 @@ function option_generation(x){             //??? migliorare percorsi
      * Options filtering
      */
     let best_option;
-    if(map.favorite_coordinates){
-        if (options.length==0){
-            if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "no option");
+    if (map.favorite_coordinates) {
+        if (options.length == 0) {
+            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "no option");
             //let time = config.MOVEMENT_DURATION*map.favorite_coordinates.length;
-            for(let position of map.favorite_coordinates){
-                if(distance_manhattan(me,position)>10){
-                    continue;
-                }
-                if(me.x==position.x&& me.y == position.y){
+            let option_is_generated = false;
+            for (let position of map.favorite_coordinates) {
+                /*                 if(distance_manhattan(me,position)>10){
+                                    continue;
+                                } */
+                if (me.x == position.x && me.y == position.y) {
                     position.time = Date.now();
                 }
                 //if(logs) console.log(position, Date.now()-position.time,config.MOVEMENT_DURATION)
-                if(Date.now()-position.time>max_time){
-                    let distance = distance_path(me,position);
+                if (Date.now() - position.time > max_time) {
+                    let distance = distance_path(me, position);
                     //if(logs) console.log("##########################",me,position,distance)
-                    if(distance){
-                        options.push(["go_to",position.value-distance,position.x,position.y]);
+                    if (distance) {
+                        options.push(["go_to", position.value - distance, position.x, position.y]);
+                        option_is_generated = true
                     }
                 }
+            }
+            //to not let the agent stuck it will be generated a random move if no other action is available
+            if (!option_is_generated) {
+                options.push(["random_move", 0, 0, 0]);
+
             }
         }
         /*if (options.length ==0){
@@ -433,7 +439,7 @@ function option_generation(x){             //??? migliorare percorsi
             let distance = distance_manhattan(me,position);
             options.push(["go_to",position.value-distance,position.x,position.y]);
         }*/
-        
+
 
         //if(logs) console.log("OPTIONS",options)
         let max_priority = Number.MIN_SAFE_INTEGER;
@@ -448,7 +454,7 @@ function option_generation(x){             //??? migliorare percorsi
     /**
      * Best option is selected
      */
-    if (best_option){
+    if (best_option) {
         myAgent.push(best_option);
     }
 }
@@ -464,6 +470,7 @@ function option_generation(x){             //??? migliorare percorsi
 /**
  * Intention revision loop
  */
+var no_intention_conter = 0
 class IntentionRevision {
 
     #intention_queue = new Array();
@@ -472,16 +479,17 @@ class IntentionRevision {
     }
 
     async loop() {
-        let loop_counter=0;
+        let loop_counter = 0;
         while (true) {
-            if(logs) console.log(colors.red + "[main_loop]" +resetColor+ "==================================================================>",loop_counter++);
+            if (logs) console.log(colors.red + "[main_loop]" + resetColor + "==================================================================>", loop_counter++);
             // Consumes intention_queue if not empty
             if (this.intention_queue.length > 0) {
+                no_intention_conter = 0
                 try {
-                    if(logs) console.log(colors.red + "[main_loop]" +resetColor+ 'intentionRevision.loop', this.intention_queue.map(i => i.predicate));
+                    if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'intentionRevision.loop', this.intention_queue.map(i => i.predicate));
 
                 } catch (error) {
-                    if(logs) console.log(error)
+                    if (logs) console.log(error)
                 }
 
                 // Current intention
@@ -501,15 +509,18 @@ class IntentionRevision {
                 }*/
 
                 // Start achieving intention
+                if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'intentionRevision.loop.intention', intention);
+
                 await intention.achieve()
-                // Catch eventual error and continue
-                .catch(error => {
-                    if(logs) console.log( colors.red + "[main_loop]" +resetColor+ 'Failed intention', ...intention.predicate, 'with error:', error )
-                });
+                    // Catch eventual error and continue
+                    .catch(error => {
+                        if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Failed intention', ...intention.predicate, 'with error:', error)
+                    });
 
                 // Remove from the queue
                 this.intention_queue.shift();
-            }else{
+            } else {
+                if (logs) console.log(colors.red + "[main_loop]" + resetColor + "No intention found");
                 option_generation(3);
             }
             // Postpone next iteration at setImmediate
@@ -520,7 +531,7 @@ class IntentionRevision {
     // async push ( predicate ) { }
 
     log(...args) {
-        if(logs) console.log(...args)
+        if (logs) console.log(...args)
     }
 
 }
@@ -532,23 +543,23 @@ class IntentionRevisionReplace extends IntentionRevision {
         // Check if already queued
         const last = this.intention_queue.at(this.intention_queue.length - 1);
         //if (last && last.predicate.join(' ') == predicate.join(' ')) {
-        if(last){
-            if(logs) console.log("[Intentions]---check-if-replace------>",last.predicate,"----with----",predicate);
+        if (last) {
+            if (logs) console.log("[Intentions]---check-if-replace------>", last.predicate, "----with----", predicate);
             /*for(let i=0; i<=1000000000;i++){
             }*/
-            if((last.predicate[0]==predicate[0])&&(last.predicate[2]==predicate[2])&&(last.predicate[3]==predicate[3])){
-                last.predicate[1]=predicate[1];
+            if ((last.predicate[0] == predicate[0]) && (last.predicate[2] == predicate[2]) && (last.predicate[3] == predicate[3])) {
+                last.predicate[1] = predicate[1];
                 return;
             }
             else if (last.predicate[1] > predicate[1]) {
                 return; // intention is already being achieved
             }
         }
-        else{
-            if(logs) console.log("[Intentions] ---> no last in the queue");
+        else {
+            if (logs) console.log("[Intentions] ---> no last in the queue");
         }
 
-        if(logs) console.log('[Intentions] ---> IntentionRevisionReplace.push', predicate);
+        if (logs) console.log('[Intentions] ---> IntentionRevisionReplace.push', predicate);
         const intention = new Intention(this, predicate);
         this.intention_queue.push(intention);
 
@@ -612,7 +623,7 @@ class Intention {
         if (this.#parent && this.#parent.log)
             this.#parent.log('\t', ...args)
         else
-        if(logs) console.log(...args)
+            if (logs) console.log(...args)
     }
 
     #started = false;
@@ -630,21 +641,21 @@ class Intention {
         for (const planClass of planLibrary) {
 
             // if stopped then quit
-            if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
+            if (this.stopped) throw ['[achieve intent]stopped intention', ...this.predicate];
 
             // if plan is 'statically' applicable
             if (planClass.isApplicableTo(this.predicate[0])) {
                 // plan is instantiated
                 this.#current_plan = new planClass(this.#parent);
-                this.log('[achive intent]achieving intention', ...this.predicate, 'with plan', planClass.name);
+                this.log('[achieve intent]achieving intention', ...this.predicate, 'with plan', planClass.name);
                 // and plan is executed and result returned
                 try {
                     const plan_res = await this.#current_plan.execute(...this.predicate);
-                    this.log('[achive intent]succesful intention', ...this.predicate, 'with plan', planClass.name, 'with result:', plan_res);
+                    this.log('[achieve intent]succesful intention', ...this.predicate, 'with plan', planClass.name, 'with result:', plan_res);
                     return plan_res
                     // or errors are caught so to continue with next plan
                 } catch (error) {
-                    this.log('[achive intent]failed intention', ...this.predicate, 'with plan', planClass.name, 'with error:', error);
+                    this.log('[achieve intent]failed intention', ...this.predicate, 'with plan', planClass.name, 'with error:', error);
                 }
             }
 
@@ -693,7 +704,7 @@ class Plan {
         if (this.#parent && this.#parent.log)
             this.#parent.log('\t', ...args)
         else
-            if(logs) console.log(...args)
+            if (logs) console.log(...args)
     }
 
     // this is an array of sub intention. Multiple ones could eventually being achieved in parallel.
@@ -709,11 +720,11 @@ class Plan {
 
 class GoPickUp extends Plan {
 
-    static isApplicableTo(intention){
+    static isApplicableTo(intention) {
         return intention == 'go_pick_up';
     }
 
-    async execute(desire, priority, x, y){
+    async execute(desire, priority, x, y) {
         if (this.stopped) throw ['stopped']; // if stopped then quit
         await this.subIntention(['go_to', priority, x, y]);
         if (this.stopped) throw ['stopped']; // if stopped then quit
@@ -743,65 +754,91 @@ class Deliver extends Plan {
 
 }
 
+class RandomMove extends Plan {
+
+    static isApplicableTo(intention) {
+        return intention == 'random_move';
+    }
+
+    async execute(desire, priority, x, y) {
+        const direction = getRandomDirection();
+        console.log(colors.green + "[plan]" + resetColor + "move randomly", direction);
+        await client.move(direction);
+    }
+}
+function getRandomDirection() {
+    const directions = ["up", "down", "left", "right"];
+    const randomIndex = Math.floor(Math.random() * directions.length);
+    return directions[randomIndex];
+}
+
 class GoTo extends Plan {
 
     static isApplicableTo(intention) {
         return intention == 'go_to';
     }
 
-    async execute(intention, priority, x, y){
-        if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> starting movement to ->", x, y);
+    async execute(intention, priority, x, y) {
+        if (logs) console.log(colors.green + "[plan]" + resetColor + "-> starting movement from" + me.x, me.y + " to ->", x, y);
         let path = pathfind(me, { x: x, y: y });
         //console.log(path)
-        if(path == null){
-            if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> path null");
+        if (path == null) {
+            if (logs) console.log(colors.green + "[plan]" + resetColor + "-> path null");
             throw ['failed (no path found)'];
         }
         let step_counter = 1;
         //let grid = ut.generategrid(map, beliefSet_agents.values())
         //if(logs) console.log(ut.printGridSEPath(grid,me,{ x: x, y: y },path))
-        let counter=0;
-        while(me.x != x || me.y != y){
+        let counter = 0;
+        while (me.x != x || me.y != y) {
             let last_action = null //to_remove
             if (this.stopped) {
-                if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STOPPED");
+                if (logs) console.log(colors.green + "[plan]" + resetColor + "-> execute STOPPED");
                 throw ['stopped'];
             }
 
             let me_tmp = { x: me.x, y: me.y };
-            if(path[step_counter][0] < me.x){
+            if (path[step_counter][0] < me.x) {
                 last_action = "left";
                 await client.move('left');
             }
-            else if (path[step_counter][0] > me.x){
+            else if (path[step_counter][0] > me.x) {
                 last_action = "right";
                 await client.move('right');
             }
-            else if (path[step_counter][1] > me.y){
+            else if (path[step_counter][1] > me.y) {
                 last_action = "up";
                 await client.move('up');
             }
-            else if (path[step_counter][1] < me.y){
+            else if (path[step_counter][1] < me.y) {
                 last_action = "down";
                 await client.move('down');
             }
-            if((me.x==me_tmp.x)&&(me.y==me_tmp.y)&&(counter<3)){
-                if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> retrying");
+            if ((me.x == me_tmp.x) && (me.y == me_tmp.y) && (counter < 3)) {
+                if (logs) console.log(colors.green + "[plan]" + resetColor + "-> retrying");
                 counter++;
                 continue;
             }
-            else if(counter==3){
-                if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STUCKED");
-                throw [colors.green + "[plan]" +resetColor+ 'stucked'];
+            else if (counter == 3) {
+                if (logs) console.log(colors.green + "[plan]" + resetColor + "-> execute STUCKED");
+                throw [colors.green + "[plan]" + resetColor + 'stucked'];
             }
-            else{
+            else {
                 me.x = path[step_counter][0];
                 me.y = path[step_counter][1];
                 step_counter += 1;
+            }// if me on a delivery point of the grid, put down
+            if (delivery_grid[me.x][me.y]) {
+                await client.putdown();
+                delete_put_down();
             }
-            if(logs) console.log(colors.green + "[plan]" +resetColor+ intention,x,y,step_counter,path[step_counter-1],last_action);
+            if (parcel_grid[me.x][me.y]) {
+                await client.pickup();
+                delete_parcels_here();
+            }
+            if (logs) console.log(colors.green + "[plan]" + resetColor + intention, x, y, step_counter, path[step_counter - 1], last_action);
         }
-        console.log(colors.green + "[plan]" +resetColor+ '-> target reached')
+        console.log(colors.green + "[plan]" + resetColor + '-> target reached')
         return "success";
     }
 }
@@ -811,3 +848,4 @@ class GoTo extends Plan {
 planLibrary.push(GoPickUp);
 planLibrary.push(GoTo);
 planLibrary.push(Deliver);
+planLibrary.push(RandomMove);
