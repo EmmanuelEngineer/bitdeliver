@@ -3,14 +3,22 @@ import { Pathfinder, Node } from './Pathfinder.mjs';
 import { Utilities as ut } from "./Utilities.js"
 
 const logs = true;
+const communication_logs = true;
 /* 
     Da aggingere la parte di aggiornamento delle opzioni,
     aggiungere i posti di default,
   */
+
+let token = ""
+let name = ""
+if (process.argv[2] !== undefined) name = "?name=" + process.argv[2]
+if (process.argv[3] !== undefined) token = process.argv[3]
+
 const client = new DeliverooApi(
-    'http://localhost:8080/?name=bitdeliver',
-    ''
+    'http://localhost:8080/' + name,
+    token
 )
+
 
 //???-migliorare maxValue
 function generate_favorite_coordinates() {
@@ -40,8 +48,9 @@ function generate_favorite_coordinates() {
         let y = tile.y;
         const key = `${x}_${y}`;
         const value = temporaryGridMap.get(key);
-        if (value !== undefined && value > maxValue / 2) {
-            resultList.push({ x, y, value, time: start - max_time });
+        //tiles per spawnable tiles
+        if (value !== undefined && (value > maxValue / 2 || (map.height * map.width) / map.spawnable_tiles.length > 10)) {
+            resultList.push({ x, y, value, time: start - favorite_position_choosing_time });
         }
     }
     resultList.sort((a, b) => b.value - a.value);
@@ -54,20 +63,20 @@ function distance_manhattan(a, b) {
     return dx + dy;
 }
 
-function distance_path(a, b) {
-    let path = pathfind(a, b);
+function distance_path(a, b, consider_partner) {
+    let path = pathfind(a, b, consider_partner);
     if (path == null)
         return null;
     else return path.length;
 }
 
 
-function get_nearest_delivery_point_path(a) {
+function get_nearest_delivery_point_path(a, consider_partner) {
     let min = Number.MAX_VALUE;
     let nearest_point = null;
     let distance = null;
     for (let delivery_point of map.delivery_tiles) {
-        distance = distance_path(a, delivery_point);
+        distance = distance_path(a, delivery_point, consider_partner);
         if (distance == null) continue;
         if (distance < min) {
             min = distance;
@@ -81,8 +90,8 @@ function get_nearest_delivery_point_path(a) {
     return nearest_point;
 }
 
-function pathfind(start_pos, end_pos) {
-    let grid = ut.generategrid(map, beliefSet_agents.values())
+function pathfind(start_pos, end_pos, consider_partner) {
+    let grid = ut.generategrid(map, beliefSet_agents.values(), consider_partner)
     //console.log(start_pos,end_pos)
     //if(logs) console.log(ut.printGridSE(grid,start_pos,end_pos))
     let start = new Node(Math.round(start_pos.x), Math.round(start_pos.y), 0, 0);
@@ -116,7 +125,7 @@ client.onConfig((config_input) => {
 function delete_put_down() {
     const idsToDelete = [];
     for (const p of beliefSet_parcels.values()) {
-        if (p.carriedBy == me.id) {
+        if (p.carriedBy == global.me.id) {
             idsToDelete.push(p.id);
         }
     }
@@ -128,7 +137,7 @@ function delete_put_down() {
 function delete_parcels_here() {
     const idsToDelete = [];
     for (const p of beliefSet_parcels.values()) {
-        if ((p.carriedBy != me.id) && (p.x == me.x) && (p.y == me.y)) {
+        if ((p.carriedBy != global.me.id) && (p.x == global.me.x) && (p.y == global.me.y)) {
             idsToDelete.push(p.id);
         }
     }
@@ -142,6 +151,8 @@ const colors = {
     blue: '\x1b[34m',
     red: '\x1b[31m',
     green: '\x1b[32m',
+    bgmagenta: "\x1b[45m",
+    bgcyan: "\x1b[46m"
     //yellowAndWhite: '\x1b[33;47m'
 };
 const resetColor = '\x1b[0m';
@@ -151,9 +162,11 @@ const resetColor = '\x1b[0m';
 
 
 
+
+
 const map = {};
 var delivery_grid = []//used for quick reference for when i pass on a delivery point
-var max_time = 1000;
+var favorite_position_choosing_time;
 client.onMap((width, height, tiles) => {
     //if(logs) console.log(colors.yellow + "[onMap]" +resetColor+ " receiving map");
     map.width = width;
@@ -170,8 +183,8 @@ client.onMap((width, height, tiles) => {
     map.spawnable_tiles = spawnable_tiles;
 
     //if(logs) console.log("CARATTERISTICHE MAPPA", width, height, tiles);
-    max_time = map.width * map.height * config.MOVEMENT_DURATION / 10;
-    if (max_time < 3000) max_time = 3000;
+    favorite_position_choosing_time = map.height * map.width * config.MOVEMENT_DURATION / 10;
+    if (favorite_position_choosing_time < 3000) favorite_position_choosing_time = 3000;
     map.favorite_coordinates = generate_favorite_coordinates();
     if (logs) console.log(map.favorite_coordinates);
     delivery_grid = Array.from({ length: map.height }, () => Array(map.width).fill(false))
@@ -184,58 +197,202 @@ client.onMap((width, height, tiles) => {
 /**
  * Beliefset revision function
  */
-const me = {};
+global.me = {};
 client.onYou(({ id, name, x, y, score }) => {
     //if(logs) console.log(colors.yellow + "[onYou]" +resetColor+ "receiving new position");
-    me.id = id;
-    me.name = name;
-    me.x = x;
-    me.y = y;
-    me.score = score;
+    global.me.id = id;
+    global.me.name = name;
+    global.me.x = x;
+    global.me.y = y;
+    global.me.score = score;
 })
+//====================================================================================message
+
+global.communication = { master: false, partner_id: null }
+
+//broadcast to let the other agent know that there is a connection available
+const partner_interval = setInterval(
+    function () {
+        client.shout('🍗🍗🍗');
+        console.log(colors.bgmagenta, "searching partner", resetColor)
+
+    }, 500);
+
+
+// Defining the Master/Slave relationship based on the biggest string, bigger id is the master
+function set_role(id) {
+    if (global.me.id > id) {
+        global.communication.master = true
+        console.log(colors.bgmagenta, "I'm the Master", resetColor)
+        clearInterval(partner_interval)
+    } else {
+        global.communication.master = false
+        console.log(colors.bgmagenta, "I'm the Slave", resetColor)
+        clearInterval(partner_interval)
+    }
+
+    global.communication.partner_id = id
+}
 
 
 
+client.onMsg(async (id, name, msg, reply) => {
+    //teammate searching the partner (is allowed to reset the role in case the teammate crashed)
+    if (msg == "🍗🍗🍗") {
+        if (communication_logs)
+            console.log("asking handshake");
+        let reply = await client.ask(id, '🐔🐔🐔');
+        if (reply == "🐔🐔🐔") set_role(id)
+        return;
+    } else
+        // The teammate handshake 
+        if (msg == "🐔🐔🐔" && !global.communication.partner_id) {
+            if (reply) {// per protocol definition the teammate must use the ask method, so the field reply must be not null
+                if (communication_logs)
+                    console.log("replying to handshake")
+                try { reply("🐔🐔🐔") } catch { (error) => console.error(error) }
+                set_role(id)
+            }
+            else console.log("⚠️⚠️⚠️" + colors.red + " the handshake didn't respect the protocol" + resetColor)
+        } else
+            //communication between partners has protocol the excange of messages  msg.type and msg.obj
+            if (id == global.communication.partner_id) {//if is the partner
+                if (communication_logs)
+                    console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, msg.type)
 
+                if (msg.type == "beliefset_agents") {
+                    let obj = ut.jsonToMap(msg.obj)
+                    if (obj.size > 0) {
+                        console.log(colors.bgmagenta, "[PartnerMessage] before ", resetColor, colors.blue,
+                            ut.printBeliefAgents(beliefSet_agents), "obj:\n", ut.printBeliefAgents(obj))
+                        for (const [key, a] of obj) {
+                            a.viewable = false
+                            if (beliefSet_agents.has(a.id)) {
+                                if (a.time < beliefSet_agents.get(a.id).time) {
+                                    beliefSet_agents.set(a.id, a)
+                                }
+                            } else beliefSet_agents.set(a.id, a)
+                        }
+                        if (communication_logs)
+                            console.log(colors.bgmagenta, "[PartnerMessage] after ", resetColor, colors.blue, ut.printBeliefAgents(beliefSet_agents), resetColor)
+                    }
+                } else
+                    if (msg.type == "beliefset_parcels") {
+                        let obj = ut.jsonToMap(msg.obj)
+                        console.log(colors.bgmagenta, "[PartnerMessage] before ", resetColor, colors.yellow,
+                            msg.obj, "obj:\n", ut.printBeliefParcels(obj))
+                        if (obj.size > 0) {
+                            for (const [key, a] of obj) {
+                                a.viewable = false
+                                if (beliefSet_parcels.has(a.id)) {
+                                    if (a.time < beliefSet_parcels.get(a.id).time) {
+                                        beliefSet_parcels.set(a.id, a)
+                                    }
+                                } else beliefSet_parcels.set(a.id, a)
+                            }
+                            console.log(colors.bgmagenta, "[PartnerMessage] after ", resetColor, colors.yellow, ut.printBeliefParcels(beliefSet_parcels), resetColor)
+                        }
+                    } else if (msg.type == "option_communication") {
+                        let partner_options = msg.obj
+                        console.log(colors.bgmagenta, "[PartnerMessage] option communication ", resetColor, partner_options)
+
+                        let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
+                        if (current_intention) {
+                            console.log(colors.bgmagenta, "[PartnerMessage]  Comparing: ", resetColor, partner_options[0], "--->", current_intention.predicate)
+                            if (partner_options[0][0] == current_intention.predicate[0] && (partner_options[0][0] === "go_pick_up" || partner_options[0][0] === "go_to")) {
+
+                                if ((current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3]) && // same end Position
+                                    (partner_options[0][0] === "go_pick_up" || partner_options[0][0] === "go_to") && // these actions
+                                    (current_intention.predicate[1] > partner_options[0][1] || // my priority on it is bigger
+                                        (current_intention.predicate[1] == partner_options[0][1] && global.me.id > communication.partner_id)) // if the priority is the same if,I'm bigger i go
+                                    ) {
+                                    console.log(colors.bgmagenta, "[Reply]  I'm on my way, generate another")
+                                    reply({type:"generate_another"})
+                                } else {
+                                    reply({ type: "go_ahead" })
+                                    console.log(colors.bgmagenta, "[Reply]  I'm generating another options",)
+                                    if (partner_options[0][0] == "go_pick_up")
+                                        forget_parcel_id = partner_options[0]
+                                    else if (partner_options[0][0] == "go_to") {
+                                        forget_position = [partner_options[0][2], partner_options[0][3]]
+                                    }
+                                    current_intention.stop()
+                                    option_generation(4)
+                                }
+                            } else ("go_ahead")
+                        } else ("go_ahead")
+                    } else if (msg.type == "you_block_me") {
+                        let partner_options = msg.obj.options
+                        let partner_status = msg.obj.status
+                        console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, "I'm Blocking: partner asks for help")
+                        if ((last_options[0][0] == "go_deliver" || last_options[0][0] == "go_pick_up") && last_options[0][1] - partner_options[0][1] > 2) {
+                            console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "I_ignore_you")
+                            reply({ type: "i_ignore_you" })
+                        } else {
+                            reply({ type: "plan", obj: ["💬", "💬", "💬", "💬", "💬", "💬", "💬"] })
+                            console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "A Plan")
+                        }
+                    }
+                    else { console.log("⚠️⚠️⚠️" + colors.red + " TEAMMATE SENT A NON SUPPORTED MESSAGE TYPE" + resetColor) }
+            } else//non partner messages
+                if (communication_logs)
+                    console.log("received:", id, name, msg, reply)
+});
+
+var last_message_sent = 0;
+
+function message_timer() {
+    if (Date.now() - last_message_sent > 700) {
+        last_message_sent = Date.now();
+        return true
+    } else return false
+}
+
+function say_to_teammate(msg_type, obj) {
+    //if (communication_logs) console.log("Sending:", { type: msg_type, obj:obj })
+
+    let message = "";
+    if (obj instanceof Map)
+        message = ut.mapToJSON(obj)
+    else message
+    if (communication_logs)
+        console.log(colors.bgmagenta, "[Saying to Partner]", resetColor, msg_type, message)
+    client.say(global.communication.partner_id, { type: msg_type, obj: message })
+}
+
+async function ask_teammate(msg_type, obj) {
+    //if (communication_logs) console.log("Sending:", { type: msg_type, obj:obj })
+
+    let message = "";
+    if (obj instanceof Map)
+        message = ut.mapToJSON(obj)
+    else message = obj
+    if (communication_logs)
+        console.log(colors.bgmagenta, "[Asking To Partner]", resetColor, msg_type, message)
+    return await client.ask(global.communication.partner_id, { type: msg_type, obj: message })
+}
+//====================================================================================message
 client.onAgentsSensing(async (agents) => { //intanto no memoria sugli agenti
     if ((agents != undefined) && (agents.length != 0)) {
         if (logs) console.log(colors.yellow + "[onAgents]" + resetColor + "agent_sensing");
-        beliefSet_agents = new Map();
-        //time = Date.now() - start;
+        time = Date.now(); // absolute time is needed when communicating to define which percept is most recent
         for (let a of agents) {
-            /*
+
             a.time = time
-            //compute direction
-            if (!beliefSet_agents.has(a.id)) {
-                a.action = "justPercepted"
-                a.viewable = true
-            } else {
-                let old_a = beliefSet_agents.get(a.id)
-
-                if (old_a.x > a.x) a.action = "left"
-                else if (old_a.x < a.x) a.action = "right"
-                else if (old_a.y > a.y) a.action = "down"
-                else if (old_a.y < a.y) a.action = "up"
-                else a.action = "stationary"
-                if (!old_a.viewable) if(logs) console.log("here we go again:" + a.name)
-            }*/
-
             beliefSet_agents.set(a.id, a);
 
 
             //update on all beliefs
-            
+
             for (const [key, a] of beliefSet_agents) {
                 //viewable
-                (distance_manhattan(me, a) > config.AGENTS_OBSERVATION_DISTANCE) ? a.viewable = false : a.viewable = true
+                (distance_manhattan(global.me, a) > config.AGENTS_OBSERVATION_DISTANCE) ? a.viewable = false : a.viewable = true
                 if (!a.viewable & Date.now() - a.time > 100) a.action = "lost"
                 beliefSet_agents.set(a.id, a);
             }
         }
-        let printBelief = Array.from(beliefSet_agents.values()).map(({ id, name, x, y }) => {
-            return `${name}:${x},${y}\n`;
-        }).join(' ');
-        if (logs) console.log(colors.yellow + "[onAgents]" + resetColor + "memory agents:\n" + printBelief);
+
+        if (logs) console.log(colors.yellow + "[onAgents]" + resetColor + "memory agents:\n" + ut.printBeliefAgents(beliefSet_agents));
         option_generation(1);
     }
 })
@@ -252,7 +409,7 @@ client.onParcelsSensing(async parcels => {
         time = Date.now() - start;
 
         for (let p of parcels) {
-            if ((!p.carriedBy) || p.carriedBy == me.id) {
+            if ((!p.carriedBy) || p.carriedBy == global.me.id) {
                 p.time = time;
                 beliefSet_parcels.set(p.id, p);
             }
@@ -263,12 +420,12 @@ client.onParcelsSensing(async parcels => {
                 if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (expired nearby):", p);
                 idsToDelete.push(p.id);
             }
-            else if ((p.carriedBy) && (p.carriedBy !== me.id)) {
+            else if ((p.carriedBy) && (p.carriedBy !== global.me.id)) {
                 if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (carried):", p);
                 idsToDelete.push(p.id);
             }
             else if (!parcels.some(parcel => parcel.id === p.id)) {
-                if (distance_manhattan(me, p) <= config.PARCELS_OBSERVATION_DISTANCE) {
+                if (distance_manhattan(global.me, p) <= config.PARCELS_OBSERVATION_DISTANCE) {
                     if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (lost track):", p);
                     idsToDelete.push(p.id);
                 }
@@ -291,175 +448,145 @@ client.onParcelsSensing(async parcels => {
         for (const id of idsToDelete) {
             beliefSet_parcels.delete(id);
         }
-        let printBelief = Array.from(beliefSet_parcels.values()).map(({ id, x, y, reward, time, carriedBy }) => {
-            return `${id}:${x},${y},${reward},${time},${carriedBy}\n`;
+        let printBelief = Array.from(beliefSet_parcels.values()).map(({ id, x, y, reward, time, viewable, carriedBy }) => {
+            return `${id}:${x},${y},${reward},${time},${viewable},${carriedBy}\n`;
         }).join(' ');
         if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "parcel_memory:\n" + printBelief);
-        option_generation(2);
+        //
+
+        if (!global.option_generation_occupied)
+
+            option_generation(2);
     }
 })
+var last_options = null;
 
-async function option_generation(x) {             //??? migliorare percorsi
+var forget_position = null
+let last_option_generated = 0
+async function option_generation(caller_method_id) {             //??? migliorare percorsi
+
+    if (Date.now() - last_option_generated > 300) {
+        last_option_generated = Date.now();
+        //if the caller is the main loop, to avoid error, make it loop
+    } else if (caller_method_id == 3) while (Date.now() - last_option_generated > 300) { }
+    else return
+
+
     if (logs) {
-        if (x == 1) {
+        if (caller_method_id == 1) {
             console.log(colors.blue + "[opt_gen]" + resetColor + "agents call");
         }
-        else if (x == 2) {
+        else if (caller_method_id == 2) {
             console.log(colors.blue + "[opt_gen]" + resetColor + "parcels call");
         }
-        else if (x == 3) {
+        else if (caller_method_id == 3) {
             console.log(colors.blue + "[opt_gen]" + resetColor + "main loop call");
+        } else if (caller_method_id == 4) {
+            console.log(colors.blue + "[opt_gen]" + resetColor + "message handler call");
         }
     }
     /**
  * Options generation
  */
-    const options = [];
-    /*let delivery = false;
-    let delivery_priority=0;*/
-    let nearest_delivery_point;
-    let parcels_on_me_counter = 0;
-    let parcels_on_me_reward = 0;
-    for (const parcel of beliefSet_parcels.values()) {
-        if (parcel.carriedBy == me.id) {
-            parcels_on_me_reward += parcel.reward;
-            parcels_on_me_counter += 1;
-        }
-    }
-    for (const parcel of beliefSet_parcels.values()) {
-        if (parcel.carriedBy == me.id) {
-            continue;
-        }
-        if (!parcel.carriedBy) {
-            let distance_percel = distance_path(me, parcel);
-            if (!distance_percel) {
-                if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find path to", parcel);
-                continue;
-            }
-            nearest_delivery_point = get_nearest_delivery_point_path(parcel);
-            if (!nearest_delivery_point) {
-                if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find nearest delivery point to", parcel);
-                continue;
-            }
-            if (decay_time) {
-                var priority = parcel.reward + parcels_on_me_reward - ((distance_percel + nearest_delivery_point.distance) * (parcels_on_me_counter + 1)) / (4 * decay_time);
-            }
-            else {
-                var priority = parcel.reward + parcels_on_me_reward - 2 * parcels_on_me_counter;
-            }
-            options.push(['go_pick_up', priority, parcel.x, parcel.y]);
 
-            if (parcels_on_me_counter) { //second option
-                let distance_delivery = distance_path(me, nearest_delivery_point);
-                if (!distance_delivery) {
-                    if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find path to delivery");
-                    continue;
-                }
-                priority = parcels_on_me_reward + parcel.reward - ((parcels_on_me_counter + 1) * distance_delivery + nearest_delivery_point.distance * 2) / (4 * decay_time);
-                options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
+    let options = options_by_parcels()
+
+    if (options.length == 0) {
+        //tryng to generate options without considering the partner as an obstacle
+        let options_2 = options_by_parcels(false)
+        //if i can generate options, means that we block each other and can be that
+        // we maybe need to call the planner
+        if (options_2.length != 0) {
+            if (global.communication.partner_id) {
+                let reply = await ask_teammate("you_block_me", { status: global.me, options: options_2 })
+                console.log(colors.blue + "[opt_gen]" + resetColor + "The Allied sent a plan");
+                if (reply.type == "plan")
+                    options.push["follow_plan", 999, reply.obj]
             }
-        }
-        /*else if (parcel.carriedBy == me.id){
-            if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "im carring at least a parcel");
-            if(!delivery){
-                nearest_delivery_point_delivery = get_nearest_delivery_point_path(me);
-                if (!nearest_delivery_point_delivery){
-                    if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "unable to find nearest delivery point to", parcel);
-                    continue;
-                }
-                let distance = distance_path(parcel,nearest_delivery_point_delivery);
-                //if (!distance) continue;
-                delivery_priority = parcel.reward - distance;
-                delivery = true;
-            }
-            else{
-                delivery_priority += parcel.reward;
-            }
-        }*/
-        else {
-            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "something enexpected happend while generating options");
         }
     }
-    if (parcels_on_me_counter) {
-        nearest_delivery_point = get_nearest_delivery_point_path(me);
-        if (!nearest_delivery_point) {
-            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find nearest delivery point to", parcel);
-        }
-        else {
-            let distance = nearest_delivery_point.distance;//distance_path(me, nearest_delivery_point_delivery);
-            if (decay_time) {
-                var priority = parcels_on_me_reward - (parcels_on_me_counter * distance) / (4 * decay_time);
-            }
-            else {
-                var priority = parcels_on_me_reward;
-            }
-            options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
-        }
-    }
-    /*if (delivery) {
-        options.push(['go_deliver', delivery_priority, nearest_delivery_point_delivery.x, nearest_delivery_point_delivery.y]);
-    }*/
 
     /**
      * Options filtering
      */
-    let best_option;
     if (map.favorite_coordinates) {
         if (options.length == 0) {
             if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "no option");
             //let time = config.MOVEMENT_DURATION*map.favorite_coordinates.length;
             let option_is_generated = false;
             for (let position of map.favorite_coordinates) {
+                //======message
+                if (forget_position != null && forget_position[0] == position.x && forget_position[1] == position.y) continue;
                 /*                 if(distance_manhattan(me,position)>10){
                                     continue;
                                 } */
-                if (me.x == position.x && me.y == position.y) {
+                if (global.me.x == position.x && global.me.y == position.y) {
                     position.time = Date.now();
+                    continue;
                 }
                 //if(logs) console.log(position, Date.now()-position.time,config.MOVEMENT_DURATION)
-                if (Date.now() - position.time > max_time) {
-                    let distance = distance_path(me, position);
+                if (Date.now() - position.time > favorite_position_choosing_time) {
+                    let distance = distance_path(global.me, position, true);
                     //if(logs) console.log("##########################",me,position,distance)
                     if (distance) {
-                        options.push(["go_to", position.value - distance, position.x, position.y]);
+                        //-100 to make the go_to always the worst option
+                        options.push(["go_to", position.value - distance - 100, position.x, position.y]);
                         option_is_generated = true
                     }
                 }
             }
             //to not let the agent stuck it will be generated a random move if no other action is available
             if (!option_is_generated) {
-                options.push(["random_move", 0, 0, 0]);
+                options.push(["random_move",-Infinity , 0, 0]);
 
             }
         }
-        /*if (options.length ==0){
-            if(logs) console.log(colors.blue + "[opt_gen]" +resetColor+ "No option");
-            while(1);
-            let position = map.favorite_coordinates[0];
-            let distance = distance_manhattan(me,position);
-            options.push(["go_to",position.value-distance,position.x,position.y]);
-        }*/
 
 
         //if(logs) console.log("OPTIONS",options)
-        let max_priority = Number.MIN_SAFE_INTEGER;
-        for (const option of options) {
-            if (option[1] > max_priority) {
-                max_priority = option[1];
-                best_option = option;
-            }
-        }
+        /*         for (const option of options) {
+                    if (option[1] > max_priority) {
+                        max_priority = option[1];
+                        best_option = option;
+                    }
+                } */
+
+        options.sort(function (a, b) {
+            return a[1] - b[1];
+        });
     }
 
     /**
      * Best option is selected
      */
-    if (best_option) {
-        myAgent.push(best_option);
+    //====================================message
+    if (options[0]) {
+        if (global.communication.partner_id && (options[0][0] == "go_pick_up" || options[0][0] == "go_deliver" || options[0][0] == "go_to")) {
+            if (message_timer()) {
+                let reply = await ask_teammate("option_communication", options)
+                if (reply.type == "plan") {
+                    //reply.obj
+                    console.log(colors.blue + "[opt_gen]" + resetColor + "received a plan", reply.obj)
+                } else if (reply.type == "go_with_second") {
+                    last_options = options;
+                    myAgent.push(options[1])
+                    return;
+                } else if (reply.type == "generate_another") {
+                    console.log(colors.bgcyan, "[Received reply] changing plan", resetColor)
+                    if (options[0] == "go_pick_up") forget_parcel_id = options[0][4]
+                    else forget_position = [options[0][2], options[0][3]]
+                    return;
+                } else if (reply.type == "go_ahead") { }
+            }
+        }
+        //====================================message
+
+        last_options = options;
+        myAgent.push(options[0]);
     }
 }
 
-
+var forget_parcel_id = null;
 
 // client.onAgentsSensing( agentLoop )
 // client.onYou( agentLoop )
@@ -481,6 +608,23 @@ class IntentionRevision {
     async loop() {
         let loop_counter = 0;
         while (true) {
+            if (global.communication.partner_id && message_timer()) {
+                say_to_teammate("beliefset_parcels", beliefSet_parcels)
+                say_to_teammate("beliefset_agents", beliefSet_agents)
+
+            }
+
+            let current_intention = this.intention_queue.at(this.intention_queue.length - 1)
+            if(current_intention !==undefined)
+                if (map.favorite_coordinates) {
+                    for (let coordinates in map.favorite_coordinates) {
+                        if (!(current_intention.predicate[0] == "go_to" && current_intention.predicate[2] == coordinates.x && current_intention.predicate[3]==coordinates.y))
+                            if (distance_manhattan(global.me, coordinates) <= config.PARCELS_OBSERVATION_DISTANCE)
+                                coordinates.time = Date.now()
+                    }
+                }
+
+
             if (logs) console.log(colors.red + "[main_loop]" + resetColor + "==================================================================>", loop_counter++);
             // Consumes intention_queue if not empty
             if (this.intention_queue.length > 0) {
@@ -520,7 +664,7 @@ class IntentionRevision {
                 // Remove from the queue
                 this.intention_queue.shift();
             } else {
-                if (logs) console.log(colors.red + "[main_loop]" + resetColor + "No intention found");
+                if (logs) console.log(colors.red + "[main_loop]" + resetColor + "No intention found")
                 option_generation(3);
             }
             // Postpone next iteration at setImmediate
@@ -554,6 +698,7 @@ class IntentionRevisionReplace extends IntentionRevision {
             else if (last.predicate[1] > predicate[1]) {
                 return; // intention is already being achieved
             }
+
         }
         else {
             if (logs) console.log("[Intentions] ---> no last in the queue");
@@ -636,7 +781,6 @@ class Intention {
             return this;
         else
             this.#started = true;
-
         // Trying all plans in the library
         for (const planClass of planLibrary) {
 
@@ -651,7 +795,7 @@ class Intention {
                 // and plan is executed and result returned
                 try {
                     const plan_res = await this.#current_plan.execute(...this.predicate);
-                    this.log('[achieve intent]succesful intention', ...this.predicate, 'with plan', planClass.name, 'with result:', plan_res);
+                    this.log('[achieve intent] succesful intention', ...this.predicate, 'with plan', planClass.name, 'with result:', plan_res);
                     return plan_res
                     // or errors are caught so to continue with next plan
                 } catch (error) {
@@ -779,8 +923,8 @@ class GoTo extends Plan {
     }
 
     async execute(intention, priority, x, y) {
-        if (logs) console.log(colors.green + "[plan]" + resetColor + "-> starting movement from" + me.x, me.y + " to ->", x, y);
-        let path = pathfind(me, { x: x, y: y });
+        if (logs) console.log(colors.green + "[plan]" + resetColor + "-> starting movement from" + global.me.x, global.me.y + " to ->", x, y);
+        let path = pathfind(global.me, { x: x, y: y });
         //console.log(path)
         if (path == null) {
             if (logs) console.log(colors.green + "[plan]" + resetColor + "-> path null");
@@ -790,31 +934,31 @@ class GoTo extends Plan {
         //let grid = ut.generategrid(map, beliefSet_agents.values())
         //if(logs) console.log(ut.printGridSEPath(grid,me,{ x: x, y: y },path))
         let counter = 0;
-        while (me.x != x || me.y != y) {
+        while (global.me.x != x || global.me.y != y) {
             let last_action = null //to_remove
             if (this.stopped) {
                 if (logs) console.log(colors.green + "[plan]" + resetColor + "-> execute STOPPED");
                 throw ['stopped'];
             }
 
-            let me_tmp = { x: me.x, y: me.y };
-            if (path[step_counter][0] < me.x) {
+            let me_tmp = { x: global.me.x, y: global.me.y };
+            if (path[step_counter][0] < global.me.x) {
                 last_action = "left";
                 await client.move('left');
             }
-            else if (path[step_counter][0] > me.x) {
+            else if (path[step_counter][0] > global.me.x) {
                 last_action = "right";
                 await client.move('right');
             }
-            else if (path[step_counter][1] > me.y) {
+            else if (path[step_counter][1] > global.me.y) {
                 last_action = "up";
                 await client.move('up');
             }
-            else if (path[step_counter][1] < me.y) {
+            else if (path[step_counter][1] < global.me.y) {
                 last_action = "down";
                 await client.move('down');
             }
-            if ((me.x == me_tmp.x) && (me.y == me_tmp.y) && (counter < 3)) {
+            if ((global.me.x == me_tmp.x) && (global.me.y == me_tmp.y) && (counter < 3)) {
                 if (logs) console.log(colors.green + "[plan]" + resetColor + "-> retrying");
                 counter++;
                 continue;
@@ -824,15 +968,15 @@ class GoTo extends Plan {
                 throw [colors.green + "[plan]" + resetColor + 'stucked'];
             }
             else {
-                me.x = path[step_counter][0];
-                me.y = path[step_counter][1];
+                global.me.x = path[step_counter][0];
+                global.me.y = path[step_counter][1];
                 step_counter += 1;
             }// if me on a delivery point of the grid, put down
-            if (delivery_grid[me.x][me.y]) {
+            if (delivery_grid[global.me.x][global.me.y]) {
                 await client.putdown();
                 delete_put_down();
             }
-            if (parcel_grid[me.x][me.y]) {
+            if (parcel_grid[global.me.x][global.me.y]) {
                 await client.pickup();
                 delete_parcels_here();
             }
@@ -844,8 +988,85 @@ class GoTo extends Plan {
 }
 
 
+
+
 // plan classes are added to plan library 
 planLibrary.push(GoPickUp);
 planLibrary.push(GoTo);
 planLibrary.push(Deliver);
 planLibrary.push(RandomMove);
+
+
+process.on('SIGINT', () => {
+    console.log('Received SIGINT. Custom stack trace:');
+    ut.logStackTrace();
+    process.exit();
+});
+
+
+function options_by_parcels(consider_partner = true) {
+    const options = [];
+    /*let delivery = false;
+    let delivery_priority=0;*/
+    let nearest_delivery_point;
+    let parcels_on_me_counter = 0;
+    let parcels_on_me_reward = 0;
+    for (const parcel of beliefSet_parcels.values()) {
+        if (parcel.carriedBy == global.me.id) {
+            parcels_on_me_reward += parcel.reward;
+            parcels_on_me_counter += 1;
+        }
+    }
+    for (const parcel of beliefSet_parcels.values()) {
+        // This happens when the Master tells to forget a parcel or the Master itself says to the Slave to pickit up
+        if (parcel.carriedBy == global.me.id || parcel.id == forget_parcel_id) {
+            continue;
+        }
+
+        let distance_parcel = distance_path(me, parcel, consider_partner);
+        if (!distance_parcel) {
+            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find path to", parcel);
+            continue;
+        }
+        nearest_delivery_point = get_nearest_delivery_point_path(parcel, consider_partner);
+        if (!nearest_delivery_point) {
+            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find nearest delivery point to", parcel);
+            continue;
+        }
+        if (decay_time) {
+            var priority = parcel.reward + parcels_on_me_reward - ((distance_parcel + nearest_delivery_point.distance) * (parcels_on_me_counter + 1)) / (4 * decay_time);
+        }
+        else {
+            var priority = parcel.reward + parcels_on_me_reward - 2 * parcels_on_me_counter;
+        }
+        options.push(['go_pick_up', priority, parcel.x, parcel.y, parcel.id]);
+
+        if (parcels_on_me_counter) { //second option
+            let distance_delivery = distance_path(global.me, nearest_delivery_point, consider_partner);
+            if (!distance_delivery) {
+                if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find path to delivery");
+                continue;
+            }
+            priority = parcels_on_me_reward + parcel.reward - ((parcels_on_me_counter + 1) * distance_delivery + nearest_delivery_point.distance * 2) / (4 * decay_time);
+            options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
+        }
+    }
+
+    if (parcels_on_me_counter) {
+        nearest_delivery_point = get_nearest_delivery_point_path(global.me, consider_partner);
+        if (!nearest_delivery_point) {
+            if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "unable to find nearest delivery point");
+        }
+        else {
+            let distance = nearest_delivery_point.distance;//distance_path(me, nearest_delivery_point_delivery);
+            if (decay_time) {
+                var priority = parcels_on_me_reward - (parcels_on_me_counter * distance) / (4 * decay_time);
+            }
+            else {
+                var priority = parcels_on_me_reward;
+            }
+            options.push(['go_deliver', priority, nearest_delivery_point.x, nearest_delivery_point.y]);
+        }
+    }
+    return options;
+}

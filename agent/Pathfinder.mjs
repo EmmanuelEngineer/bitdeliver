@@ -11,10 +11,10 @@ export class Pathfinder {
           return null
     }
     let counter = 0;
-    while (openSet.length > 0 ) {
+    while (openSet.length > 0 && openSet) {
       try{
         counter++;
-        console.log(counter)
+        //console.log(counter)
         //console.log(ut.printGridSE(grid,start,end))
       openSet.sort((a, b) => a.totalCost - b.totalCost);
       const currentNode = openSet.shift();
@@ -29,12 +29,14 @@ export class Pathfinder {
           if(setObj.x == neighbor.x && setObj.y == neighbor.y) continue
         }
         const tentativeCost = currentNode.cost + 1;
-        let flag = !this.hasThing(closedSet,neighbor)
-        if (flag || tentativeCost < neighbor.cost) {
+        let not_found_before = !this.hasThing(closedSet,neighbor)
+        if(this.hasThing(openSet,neighbor))
+        not_found_before = false;
+        if (not_found_before || tentativeCost < neighbor.cost) {
           neighbor.cost = tentativeCost;
           neighbor.heuristic = Pathfinder.heuristic(neighbor, end);
           neighbor.parent = currentNode;
-          if (flag) {
+          if (not_found_before) {
             openSet.push(neighbor);
           }
         }

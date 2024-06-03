@@ -113,7 +113,7 @@ export class Utilities {
     return matrix;
   }
 
-  static generategrid(map, agents) {
+  static generategrid(map, agents,consider_partner) {
     let grid;
     //the agent position is needed to consider the paths non available
     grid = this.initializeMatrix(map.height, map.width)
@@ -121,12 +121,42 @@ export class Utilities {
       grid[tile.x][tile.y] = 0;
     }
     for (let agent of agents) {
-      if (agent == undefined) break
+      if (agent == undefined) continue
       try {
-        if (agent.action != "lost")
+        if (agent.action != "lost" && (consider_partner && agent.id == global.communication.partner_id) && global.me.id != agent.id)
+          //mark obstacles on the grid
           grid[Math.round(agent.x)][Math.round(agent.y)] = 1;
-      } catch (err) { console.log("AAAAAAAAAAAAAAAAAAAAAAAA", err) }
+      } catch (err) { console.log(ut.printBeliefAgents, err) }
     }
+    //console.log(this.printGrid(grid))
     return grid;
   }
+
+  static mapToJSON = (map) => {
+    const obj = Object.fromEntries(map);
+    return JSON.stringify(obj);
+  };
+
+  static jsonToMap = (jsonString) => {
+    const obj = JSON.parse(jsonString);
+    return new Map(Object.entries(obj));
+  };
+
+  static printBeliefAgents = (beliefset) => Array.from(beliefset.values()).map(({ id, x, y, reward, time, carriedBy }) => {
+            return `${id}:${x},${y},${reward},${time},${carriedBy}\n`;
+          }).join(' ');
+
+          
+  static printBeliefParcels = (beliefset) => Array.from(beliefset.values()).map(({ id, x, y, reward, time, viewable, carriedBy }) => {
+            return `${id}:${x},${y},${reward},${time},${viewable},${carriedBy}\n`;
+          }).join(' ');
+
+  static logStackTrace() {
+  const err = new Error('Stack trace');
+  Error.captureStackTrace(err);
+  console.error(err.stack);
+}
+
+
+
 }
