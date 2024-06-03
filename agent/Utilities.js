@@ -123,7 +123,7 @@ export class Utilities {
     for (let agent of agents) {
       if (agent == undefined) continue
       try {
-        if (agent.action != "lost" && (consider_partner && agent.id == global.communication.partner_id) && global.me.id != agent.id)
+        if (!((consider_partner && agent.id == global.communication.partner_id) && global.me.id != agent.id))
           //mark obstacles on the grid
           grid[Math.round(agent.x)][Math.round(agent.y)] = 1;
       } catch (err) { console.log(ut.printBeliefAgents, err) }
@@ -142,8 +142,8 @@ export class Utilities {
     return new Map(Object.entries(obj));
   };
 
-  static printBeliefAgents = (beliefset) => Array.from(beliefset.values()).map(({ id, x, y, reward, time, carriedBy }) => {
-            return `${id}:${x},${y},${reward},${time},${carriedBy}\n`;
+  static printBeliefAgents = (beliefset) => Array.from(beliefset.values()).map(({ id, x, y,name, reward, time, carriedBy }) => {
+    return `${id}:${name},${x},${y},${reward},${time},${carriedBy}\n`;
           }).join(' ');
 
           
