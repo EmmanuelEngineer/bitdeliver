@@ -673,7 +673,7 @@ class Intention {
         for (const planClass of planLibrary) {
             if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
             if (planClass.isApplicableTo(this.predicate[0])) {
-                this.#current_plan = new Plan(this.#parent);
+                this.#current_plan = new planClass(this.#parent);
                 this.log('\n[achive intent]achieving intention', ...this.predicate, 'with plan', planClass.name);
                 try {
                     const plan_res = await this.#current_plan.execute(...this.predicate);
@@ -733,11 +733,11 @@ class Plan {
 class Plan_single extends Plan{
 
     static isApplicableTo(intention){
-        return (intention == 'go_pick_up' || intention == 'go_to' || intention == 'go_delivery');
+        return (intention == 'go_pick_up' || intention == 'go_to' || intention == 'go_deliver');
     }
 
     async execute(intention, priority, x, y){
-        let plan = generate_plan(intention,x,y,0);
+        let plan = await generate_plan(intention,x,y,0);
         if (this.stopped) throw ['stopped'];
         if (!plan || plan.length === 0) {
             if(logs) console.log(colors.green + "[plan]" +resetColor+ "plan not found" + resetColor);
@@ -745,7 +745,6 @@ class Plan_single extends Plan{
         }
         else {
             if(logs) console.log(colors.green + "[plan]" +resetColor+ "plan found");
-            //if(!coop){
             for (let step of plan){
                 if (this.stopped) throw ['stopped'];
                 let action = step.action;
@@ -820,10 +819,10 @@ class Plan_single extends Plan{
 class Plan_coop extends Plan{
 
     static isApplicableTo(intention){
-        return (intention == 'go_pick_up' || intention == 'go_to' || intention == 'go_delivery'); //???? non so cosa ci va
+        return (intention == 'nothing'); //???? non so cosa ci va
     }
     async execute(intention, priority, x, y){
-        let plan = generate_plan(intention,x,y,1);
+        let plan = await generate_plan(intention,x,y,1);
         if (this.stopped) throw ['stopped']; //???? send the 'stap waiting' message
         if (!plan || plan.length === 0) {
             if(logs) console.log(colors.green + "[plan]" +resetColor+ "plan not found" + resetColor);
@@ -922,6 +921,10 @@ class Plan_coop extends Plan{
 }
 
 class Plan_receiver extends Plan{
+    static isApplicableTo(intention){
+        return (intention == 'nothing'); //???? non so cosa ci va
+    }
+
     async execute(){ //???? adattala come vuoi
         while(!plan_terminated){  //???? set to receive the terminal message
             let step //= wait_instruction //????
@@ -1012,7 +1015,6 @@ async function generate_plan(intention,x,y,coop){ //???? riposizionare al termin
         myBeliefset.declare(ob);
     }
     let goal = '';
-    if (this.stopped) throw ['stopped'];
     for(const agent_obj of beliefSet_agents){
         const agent = agent_obj[1];
         agent.x = Math.round(agent.x);
@@ -1092,7 +1094,6 @@ async function generate_plan(intention,x,y,coop){ //???? riposizionare al termin
     if(save_pddl) pddlProblem.saveToFile();
     let problem = pddlProblem.toPddlString();
 
-    if (this.stopped) throw ['stopped'];
     let plan;
     if(!coop){
         plan = await onlineSolver(domain, problem);
