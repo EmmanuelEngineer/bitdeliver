@@ -472,7 +472,7 @@ function option_generation(x){             //??? migliorare percorsi
         }
         let max_priority = Number.MIN_SAFE_INTEGER;
         for (const option of options) {
-            if (option[1] > max_priority) {
+            if (option[1] > max_priority) { //??fare >= per il partner
                 max_priority = option[1];
                 best_option = option;
             }
@@ -532,19 +532,37 @@ class IntentionRevision {
                 // Remove from the queue
                 this.intention_queue.shift();
             }else{
+                if(map.favorite_coordinates){
+                    for (let coordinates of map.favorite_coordinates){
+                        if(distance_manhattan(me, coordinates) <= config.PARCELS_OBSERVATION_DISTANCE){
+                            coordinates.time = Date.now();
+                        }
+                    }
+                }
                 option_generation(3);
             }
             
-            if (Date.now() - this.#lastParcelSensingTime > 2000) {
+            if (Date.now() - this.#lastParcelSensingTime > 4000) {
                 if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Generating empty parcelsensing event');
                 updateParcelsBelief([]);
                 this.#lastParcelSensingTime = Date.now();
             }
 
-            if (Date.now() - this.#lastAgentSensingTime > 2000) {
+            if (Date.now() - this.#lastAgentSensingTime > 4000) {
                 if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Generating empty agentsensing event');
                 updateAgentsBelief([]);
                 this.#lastAgentSensingTime = Date.now();
+            }
+
+            let current_intention = this.intention_queue[0];
+            if(current_intention && map.favorite_coordinates){
+                for (let coordinates of map.favorite_coordinates) {
+                    if(!(current_intention.predicate[0]=="go_to"&& current_intention.predicate[2]== coordinates.x&& current_intention.predicate[3]==coordinates.y)){
+                        if (distance_manhattan(me, coordinates) <= config.PARCELS_OBSERVATION_DISTANCE){
+                            coordinates.time = Date.now();
+                        }
+                    }
+                }
             }
 
             // Postpone next iteration at setImmediate
@@ -569,8 +587,6 @@ class IntentionRevisionReplace extends IntentionRevision {
         //if (last && last.predicate.join(' ') == predicate.join(' ')) {
         if(last){
             if(logs) console.log("[Intentions]---check-if-replace------>",last.predicate,"----with----",predicate);
-            /*for(let i=0; i<=1000000000;i++){
-            }*/
             if((last.predicate[0]==predicate[0])&&(last.predicate[2]==predicate[2])&&(last.predicate[3]==predicate[3])){
                 last.predicate[1]=predicate[1];
                 return;
@@ -664,14 +680,14 @@ class Intention {
 
         if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
         this.#current_plan = new Plan(this.#parent);
-        this.log('[achive intent]achieving intention', ...this.predicate, 'with plan', Plan.name);
+        this.log('\n[achive intent]achieving intention', ...this.predicate, 'with plan', Plan.name);
         try {
             const plan_res = await this.#current_plan.execute(...this.predicate,coop);
-            this.log('[achive intent]succesful intention', ...this.predicate, 'with plan', Plan.name, 'with result:', plan_res);
+            this.log('\n[achive intent]succesful intention', ...this.predicate, 'with plan', Plan.name, 'with result:', plan_res);
             return plan_res
             // or errors are caught so to continue with next plan
         } catch (error) {
-            this.log('[achive intent]failed intention', ...this.predicate, 'with plan', Plan.name, 'with error:', error);
+            this.log('\n[achive intent]failed intention', ...this.predicate, 'with plan', Plan.name, 'with error:', error);
         }
         // if stopped then quit
         if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
@@ -729,6 +745,8 @@ class Plan {
         if (this.stopped) throw ['stopped'];
         for(const agent_obj of beliefSet_agents){
             const agent = agent_obj[1];
+            agent.x = Math.round(agent.x);
+            agent.y = Math.round(agent.y);
             if(coop && (agent.id == partner.id)){
                 continue;
             }
@@ -791,7 +809,7 @@ class Plan {
             objectsStr = objectsStr + ' me partner - agent';
         }
         else{
-            objectsStr = objectsStr.replace(' me', ' me - agent');
+            objectsStr = objectsStr + ' me - agent';
         }
         let pddlProblem = new PddlProblem(
             'bitdelivery-prob',
@@ -874,12 +892,12 @@ class Plan {
                     } else if (action == "GRAB") {
                         let [ag, ob, pos] = step.args;
                         await client.pickup();
-                        if(logs) console.log(colors.green + "[plan]" +`${ag} grab ${ob} in ${pos}`);
+                        if(logs) console.log(colors.green + "[plan]" +resetColor +`${ag} grab ${ob} in ${pos}`);
                     } else if (action == "DROP") {
                         let [ag, ob, pos] = step.args;
                         await client.putdown();
                         delete_put_down();
-                        if(logs) console.log(colors.green + "[plan]" + `${ag} drop ${ob} in ${pos}`);
+                        if(logs) console.log(colors.green + "[plan]" +resetColor+ `${ag} drop ${ob} in ${pos}`);
                     }
                 }
                 return true;
