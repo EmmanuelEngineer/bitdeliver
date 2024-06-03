@@ -3,12 +3,12 @@ import { Pathfinder, Node } from './Pathfinder_2.mjs';
 import{Utilities as ut } from "./Utilities.js"
 import { onlineSolver, PddlExecutor, PddlProblem, Beliefset, PddlDomain, PddlAction } from "@unitn-asa/pddl-client";
 
-const logs = true;
-const save_pddl = true; //in ./tmp
+const logs = false;
+const save_pddl = false; //in ./tmp
 
 
 //???? to arrange
-const coop=0;
+const coop=false;
 const partner=0;
 
 
@@ -191,14 +191,6 @@ function init_domains(){
         //,async ( ag1, ag2, from, to ) => console.log( 'exec move')//to_remove
     );
     
-
-    /*
-    (holding ?ag - agent ?ob - package) 
-    (on ?ag - agent ?pos - position) 
-    (on_p ?ob - package ?pos - position) 
-    (near ?pos1 ?pos2 - position)
-    (different ?ag1 ?ag2 - agent)
-    */
     
     let pddlDomain = new PddlDomain( 'bitdelivery-world');
     pddlDomain.addAction(move);
@@ -247,6 +239,7 @@ const myMapBeliefset = []; //??aggiunto questo e grid +funz init emodifiche onMa
 let grid = {};
 const map = {};
 let max_time = 1000;
+
 client.onMap((width, height, tiles) => {
     //if(logs) console.log(colors.yellow + "[onMap]" +resetColor+ " receiving map");
     map.width = width;
@@ -472,7 +465,7 @@ function option_generation(x){             //??? migliorare percorsi
         }
         let max_priority = Number.MIN_SAFE_INTEGER;
         for (const option of options) {
-            if (option[1] > max_priority) { //??fare >= per il partner
+            if (option[1] > max_priority){
                 max_priority = option[1];
                 best_option = option;
             }
@@ -541,18 +534,6 @@ class IntentionRevision {
                 }
                 option_generation(3);
             }
-            
-            if (Date.now() - this.#lastParcelSensingTime > 4000) {
-                if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Generating empty parcelsensing event');
-                updateParcelsBelief([]);
-                this.#lastParcelSensingTime = Date.now();
-            }
-
-            if (Date.now() - this.#lastAgentSensingTime > 4000) {
-                if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Generating empty agentsensing event');
-                updateAgentsBelief([]);
-                this.#lastAgentSensingTime = Date.now();
-            }
 
             let current_intention = this.intention_queue[0];
             if(current_intention && map.favorite_coordinates){
@@ -563,6 +544,18 @@ class IntentionRevision {
                         }
                     }
                 }
+            }
+
+            if (Date.now() - this.#lastParcelSensingTime > 4000) {
+                if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Generating empty parcelsensing event');
+                updateParcelsBelief([]);
+                this.#lastParcelSensingTime = Date.now();
+            }
+
+            if (Date.now() - this.#lastAgentSensingTime > 4000) {
+                if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Generating empty agentsensing event');
+                updateAgentsBelief([]);
+                this.#lastAgentSensingTime = Date.now();
             }
 
             // Postpone next iteration at setImmediate
@@ -677,27 +670,26 @@ class Intention {
         else
             this.#started = true;
 
-
-        if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
-        this.#current_plan = new Plan(this.#parent);
-        this.log('\n[achive intent]achieving intention', ...this.predicate, 'with plan', Plan.name);
-        try {
-            const plan_res = await this.#current_plan.execute(...this.predicate,coop);
-            this.log('\n[achive intent]succesful intention', ...this.predicate, 'with plan', Plan.name, 'with result:', plan_res);
-            return plan_res
-            // or errors are caught so to continue with next plan
-        } catch (error) {
-            this.log('\n[achive intent]failed intention', ...this.predicate, 'with plan', Plan.name, 'with error:', error);
+        for (const planClass of planLibrary) {
+            if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
+            if (planClass.isApplicableTo(this.predicate[0])) {
+                this.#current_plan = new Plan(this.#parent);
+                this.log('\n[achive intent]achieving intention', ...this.predicate, 'with plan', planClass.name);
+                try {
+                    const plan_res = await this.#current_plan.execute(...this.predicate);
+                    this.log('\n[achive intent]succesful intention', ...this.predicate, 'with plan', planClass.name, 'with result:', plan_res);
+                    return plan_res
+                    // or errors are caught so to continue with next plan
+                } catch (error) {
+                    this.log('\n[achive intent]failed intention', ...this.predicate, 'with plan', planClass.name, 'with error:', error);
+                }
+            }
         }
         // if stopped then quit
         if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
 
         // no plans have been found to satisfy the intention
-        //-----
 
-        //???chiedi aiuto al compagno
-
-        //-----
         throw ['[achive intent]no plan satisfied the intention ', ...this.predicate]
     }
 
@@ -706,7 +698,7 @@ class Intention {
 /**
  * Plan library
  */
-
+const planLibrary = [];
 
 class Plan {
 
@@ -735,99 +727,17 @@ class Plan {
         else
             if(logs) console.log(...args)
     }
+}
 
-    async execute(intention, priority, x, y, coop){
-        const myBeliefset = new Beliefset();
-        for(let ob of myMapBeliefset){
-            myBeliefset.declare(ob);
-        }
-        let goal = '';
-        if (this.stopped) throw ['stopped'];
-        for(const agent_obj of beliefSet_agents){
-            const agent = agent_obj[1];
-            agent.x = Math.round(agent.x);
-            agent.y = Math.round(agent.y);
-            if(coop && (agent.id == partner.id)){
-                continue;
-            }
-            if(agent.x-1>=0){
-                if(grid[agent.x-1][agent.y] == 0){ //taglio solo il "ponte" di andata
-                    myBeliefset.undeclare(`near p${agent.x-1}_${agent.y} p${agent.x}_${agent.y}`);
-                }
-            }
-            if(agent.x+1<grid.length){
-                if(grid[agent.x+1][agent.y] == 0){ 
-                    myBeliefset.undeclare(`near p${agent.x+1}_${agent.y} p${agent.x}_${agent.y}`);
-                }
-            }
-            if(agent.y-1>=0){
-                if(grid[agent.x][agent.y-1] == 0){ 
-                    myBeliefset.undeclare(`near p${agent.x}_${agent.y-1} p${agent.x}_${agent.y}`);
-                }
-            }
-            if(agent.y+1<grid[0].length){
-                if(grid[agent.x][agent.y+1] == 0){ 
-                    myBeliefset.undeclare(`near p${agent.x}_${agent.y+1} p${agent.x}_${agent.y}`);
-                }
-            }
-        }
-        myBeliefset.declare(`on me p${me.x}_${me.y}`);
-        if(!coop){
-            if(intention == 'go_pick_up'){
-                myBeliefset.declare(`on_pkg target p${x}_${y}`);
-                goal = `holding me target`;
-            }
-            else if(intention == 'go_deliver'){
-                myBeliefset.declare(`holding me target`);
-                goal = `on_pkg target p${x}_${y}`;
-            }
-            else if(intention == 'go_to'){
-                goal = `on me p${x}_${y}`;
-            }
-        }
-        else{
-            myBeliefset.declare(`on partner p${me.x}_${me.y}`);
-            if(intention == 'go_deliver'){
-                myBeliefset.declare(`holding partner target`); //????to define who has the package (me or partner)
-                goal = `on_pkg target p${x}_${y}`;
-            }
-            else{
-                if(logs) console.log(colors.green + "[plan]" +resetColor+ "coop mode with unknown intention");
-                throw ['unsupported intention (coop mode)'];
-            }
-        }
-        let objectsStr = myBeliefset.objects.join(' ');
-        objectsStr = objectsStr.replace(' me', '');
-        objectsStr = objectsStr + ' - position';
-        let targetIndex = objectsStr.indexOf('target');
-        if (targetIndex !== -1) {
-            objectsStr = objectsStr.replace(' target', '');
-            objectsStr = objectsStr + ' target - package';
-        }
-        if(coop){
-            objectsStr = objectsStr.replace(' partner', '');
-            objectsStr = objectsStr + ' me partner - agent';
-        }
-        else{
-            objectsStr = objectsStr + ' me - agent';
-        }
-        let pddlProblem = new PddlProblem(
-            'bitdelivery-prob',
-            objectsStr,
-            myBeliefset.toPddlString(),
-            goal
-        )
-        pddlProblem.saveToFile();
-        let problem = pddlProblem.toPddlString();
 
-        if (this.stopped) throw ['stopped'];
-        let plan;
-        if(!coop){
-            plan = await onlineSolver(domain, problem);
-        }
-        else{
-            plan = await onlineSolver(domain_coop, problem);
-        }
+class Plan_single extends Plan{
+
+    static isApplicableTo(intention){
+        return (intention == 'go_pick_up' || intention == 'go_to' || intention == 'go_delivery');
+    }
+
+    async execute(intention, priority, x, y){
+        let plan = generate_plan(intention,x,y,0);
         if (this.stopped) throw ['stopped'];
         if (!plan || plan.length === 0) {
             if(logs) console.log(colors.green + "[plan]" +resetColor+ "plan not found" + resetColor);
@@ -835,12 +745,101 @@ class Plan {
         }
         else {
             if(logs) console.log(colors.green + "[plan]" +resetColor+ "plan found");
-            if(!coop){
-                for (let step of plan) {
-                    if (this.stopped) throw ['stopped'];
-                    let action = step.action;
-                    if (action == "MOVE") {
-                        let [ag, from, to] = step.args;
+            //if(!coop){
+            for (let step of plan){
+                if (this.stopped) throw ['stopped'];
+                let action = step.action;
+                if (action == "MOVE"){
+                    let [ag, from, to] = step.args;
+                    if(logs) console.log(colors.green + "[plan]" +resetColor+ " starting moving to", to);
+                    const regex = /P(\d+)_(\d+)/;
+                    const match = to.match(regex);
+                    if (match) {
+                        var { x, y } = { x: parseInt(match[1], 10), y: parseInt(match[2], 10)};
+                    }
+                    else {
+                        throw new Error(`Invalid position format: ${position}`);
+                    }
+                    let counter=0;
+                    while(me.x != x || me.y != y){
+                        let last_action = null
+                        if (this.stopped) {
+                            if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STOPPED");
+                            throw ['stopped'];
+                        }
+                        let me_tmp = { x: me.x, y: me.y };
+                        if(x < me.x){
+                            last_action = "left";
+                            await client.move('left');
+                        }
+                        else if (x > me.x){
+                            last_action = "right";
+                            await client.move('right');
+                        }
+                        else if (y > me.y){
+                            last_action = "up";
+                            await client.move('up');
+                        }
+                        else if (y < me.y){
+                            last_action = "down";
+                            await client.move('down');
+                        }
+                        if((me.x==me_tmp.x)&&(me.y==me_tmp.y)&&(counter<3)){
+                            if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> retrying");
+                            counter++;
+                            continue;
+                        }
+                        else if(counter==3){
+                            if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STUCKED");
+                            throw [colors.green + "[plan]" +resetColor+ 'stucked'];
+                        }
+                        else{
+                            me.x = x;
+                            me.y = y;
+                        }
+                        if(logs) console.log(colors.green + "[plan]" +resetColor+ intention,x,y,last_action);
+                    }
+                } else if (action == "GRAB") {
+                    let [ag, ob, pos] = step.args;
+                    await client.pickup();
+                    if(logs) console.log(colors.green + "[plan]" +resetColor +`${ag} grab ${ob} in ${pos}`);
+                } else if (action == "DROP") {
+                    let [ag, ob, pos] = step.args;
+                    await client.putdown();
+                    delete_put_down();
+                    if(logs) console.log(colors.green + "[plan]" +resetColor+ `${ag} drop ${ob} in ${pos}`);
+                }
+            }
+            return "success";
+        }
+    }
+}
+
+
+
+class Plan_coop extends Plan{
+
+    static isApplicableTo(intention){
+        return (intention == 'go_pick_up' || intention == 'go_to' || intention == 'go_delivery'); //???? non so cosa ci va
+    }
+    async execute(intention, priority, x, y){
+        let plan = generate_plan(intention,x,y,1);
+        if (this.stopped) throw ['stopped']; //???? send the 'stap waiting' message
+        if (!plan || plan.length === 0) {
+            if(logs) console.log(colors.green + "[plan]" +resetColor+ "plan not found" + resetColor);
+            throw ['failed (no plan found)'];
+        }
+        else {
+            for (let step of plan){
+                if (this.stopped) throw ['stopped']; //???? send the 'stap waiting' message
+                let action = step.action;
+                if (action == "MOVE_COOP") {
+                    let [ag, ag2, from, to] = step.args;
+                    if(ag == "PARTNER"){
+                        //send(partner step); //???? send the instruction and wait
+                        //wait partner completition of the action
+                    }
+                    else{
                         if(logs) console.log(colors.green + "[plan]" +resetColor+ " starting moving to", to);
                         const regex = /P(\d+)_(\d+)/;
                         const match = to.match(regex);
@@ -855,6 +854,7 @@ class Plan {
                             let last_action = null
                             if (this.stopped) {
                                 if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STOPPED");
+                                //???? send the 'stap waiting' message
                                 throw ['stopped'];
                             }
                             let me_tmp = { x: me.x, y: me.y };
@@ -889,43 +889,216 @@ class Plan {
                             }
                             if(logs) console.log(colors.green + "[plan]" +resetColor+ intention,x,y,last_action);
                         }
-                    } else if (action == "GRAB") {
-                        let [ag, ob, pos] = step.args;
+                    }
+                } else if (action == "GRAB") {
+                    let [ag, ob, pos] = step.args;
+                    if(ag == "PARTNER"){
+                        //send(partner step); //???? send the instruction and wait
+                        //wait partner completition of the action
+                    }
+                    else{
                         await client.pickup();
                         if(logs) console.log(colors.green + "[plan]" +resetColor +`${ag} grab ${ob} in ${pos}`);
-                    } else if (action == "DROP") {
-                        let [ag, ob, pos] = step.args;
+                    }
+                
+            
+                } else if (action == "DROP") {
+                    let [ag, ob, pos] = step.args;
+                    if(ag == "PARTNER"){
+                        //send(partner step); //???? send the instruction and wait
+                        //wait partner completition of the action
+                    }
+                    else{
                         await client.putdown();
                         delete_put_down();
                         if(logs) console.log(colors.green + "[plan]" +resetColor+ `${ag} drop ${ob} in ${pos}`);
                     }
                 }
-                return true;
             }
-            else{//coop
-                for (let step of plan) {  ////???? to define
-                    if (this.stopped) throw ['stopped'];
-                    let action = step.action;
-                    if (action == "MOVE") {
-                        let [ag, from, to] = step.args;
+            //send(partner plan_terminated); //???? send the 'stap waiting' message
+            return "success";
+        }
+    }
+}
 
-
-                    } else if (action == "GRAB") {
-                        let [ag, ob, pos] = step.args;
-
-
-                    } else if (action == "DROP") {
-                        let [ag, ob, pos] = step.args;
-
-
-                    }
-
+class Plan_receiver extends Plan{
+    async execute(){ //???? adattala come vuoi
+        while(!plan_terminated){  //???? set to receive the terminal message
+            let step //= wait_instruction //????
+            let action = step.action;
+            if (action == "MOVE"){
+                let [ag, ag2, from, to] = step.args;
+                if(logs) console.log(colors.green + "[plan]" +resetColor+ " starting moving to", to);
+                const regex = /P(\d+)_(\d+)/;
+                const match = to.match(regex);
+                if (match) {
+                    var { x, y } = { x: parseInt(match[1], 10), y: parseInt(match[2], 10)};
                 }
-
+                else {
+                    throw new Error(`Invalid position format: ${position}`);  //???? come gestiamo gli errori? (send(fail) or something else)
+                }
+                let counter=0;
+                while(me.x != x || me.y != y){
+                    let last_action = null
+                    let me_tmp = { x: me.x, y: me.y };
+                    if(x < me.x){
+                        last_action = "left";
+                        await client.move('left');
+                    }
+                    else if (x > me.x){
+                        last_action = "right";
+                        await client.move('right');
+                    }
+                    else if (y > me.y){
+                        last_action = "up";
+                        await client.move('up');
+                    }
+                    else if (y < me.y){
+                        last_action = "down";
+                        await client.move('down');
+                    }
+                    if((me.x==me_tmp.x)&&(me.y==me_tmp.y)&&(counter<3)){
+                        if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> retrying");
+                        counter++;
+                        continue;
+                    }
+                    else if(counter==3){
+                        if(logs) console.log(colors.green + "[plan]" +resetColor+ "-> execute STUCKED");
+                        throw [colors.green + "[plan]" +resetColor+ 'stucked'];
+                    }
+                    else{
+                        me.x = x;
+                        me.y = y;
+                    }
+                    if(logs) console.log(colors.green + "[plan]" +resetColor+ intention,x,y,last_action);
+                }
+            } else if (action == "GRAB") {
+                let [ag, ob, pos] = step.args;
+                await client.pickup();
+                if(logs) console.log(colors.green + "[plan]" +resetColor +`${ag} grab ${ob} in ${pos}`);
+            } else if (action == "DROP") {
+                let [ag, ob, pos] = step.args;
+                await client.putdown();
+                delete_put_down();
+                if(logs) console.log(colors.green + "[plan]" +resetColor+ `${ag} drop ${ob} in ${pos}`);
             }
         }
-        
-
+        return "success";
     }
+}
 
+class Plan_random_move extends Plan{//????
+    //...
+}
+
+
+// plan classes are added to plan library 
+planLibrary.push(Plan_single);
+planLibrary.push(Plan_coop);
+planLibrary.push(Plan_receiver);
+//planLibrary.push(Plan_random_move);
+
+
+
+
+
+
+
+
+
+async function generate_plan(intention,x,y,coop){ //???? riposizionare al termine
+    const myBeliefset = new Beliefset();
+    for(let ob of myMapBeliefset){
+        myBeliefset.declare(ob);
+    }
+    let goal = '';
+    if (this.stopped) throw ['stopped'];
+    for(const agent_obj of beliefSet_agents){
+        const agent = agent_obj[1];
+        agent.x = Math.round(agent.x);
+        agent.y = Math.round(agent.y);
+        if(coop && (agent.id == partner.id)){
+            continue;
+        }
+        if(agent.x-1>=0){
+            if(grid[agent.x-1][agent.y] == 0){ //taglio solo il "ponte" di andata
+                myBeliefset.undeclare(`near p${agent.x-1}_${agent.y} p${agent.x}_${agent.y}`);
+            }
+        }
+        if(agent.x+1<grid.length){
+            if(grid[agent.x+1][agent.y] == 0){ 
+                myBeliefset.undeclare(`near p${agent.x+1}_${agent.y} p${agent.x}_${agent.y}`);
+            }
+        }
+        if(agent.y-1>=0){
+            if(grid[agent.x][agent.y-1] == 0){ 
+                myBeliefset.undeclare(`near p${agent.x}_${agent.y-1} p${agent.x}_${agent.y}`);
+            }
+        }
+        if(agent.y+1<grid[0].length){
+            if(grid[agent.x][agent.y+1] == 0){ 
+                myBeliefset.undeclare(`near p${agent.x}_${agent.y+1} p${agent.x}_${agent.y}`);
+            }
+        }
+    }
+    myBeliefset.declare(`on me p${me.x}_${me.y}`);
+    if(!coop){
+        if(intention == 'go_pick_up'){
+            myBeliefset.declare(`on_pkg target p${x}_${y}`);
+            goal = `holding me target`;
+        }
+        else if(intention == 'go_deliver'){
+            myBeliefset.declare(`holding me target`);
+            goal = `on_pkg target p${x}_${y}`;
+        }
+        else if(intention == 'go_to'){
+            goal = `on me p${x}_${y}`;
+        }
+    }
+    else{
+        myBeliefset.declare(`on partner p${me.x}_${me.y}`);
+        myBeliefset.declare(`different partner me`);
+        myBeliefset.declare(`different me partner`);
+        if(intention == 'go_deliver'){
+            myBeliefset.declare(`holding partner target`); //????to define who has the package (me or partner)
+            goal = `on_pkg target p${x}_${y}`;
+        }
+        else{
+            if(logs) console.log(colors.green + "[plan]" +resetColor+ "coop mode with unknown intention");
+            throw ['unsupported intention (coop mode)'];
+        }
+    }
+    let objectsStr = myBeliefset.objects.join(' ');
+    objectsStr = objectsStr.replace(' me', '');
+    objectsStr = objectsStr + ' - position';
+    let targetIndex = objectsStr.indexOf('target');
+    if (targetIndex !== -1) {
+        objectsStr = objectsStr.replace(' target', '');
+        objectsStr = objectsStr + ' target - package';
+    }
+    if(coop){
+        objectsStr = objectsStr.replace(' partner', '');
+        objectsStr = objectsStr + ' me partner - agent';
+    }
+    else{
+        objectsStr = objectsStr + ' me - agent';
+    }
+    let pddlProblem = new PddlProblem(
+        'bitdelivery-prob',
+        objectsStr,
+        myBeliefset.toPddlString(),
+        goal
+    )
+    if(save_pddl) pddlProblem.saveToFile();
+    let problem = pddlProblem.toPddlString();
+
+    if (this.stopped) throw ['stopped'];
+    let plan;
+    if(!coop){
+        plan = await onlineSolver(domain, problem);
+    }
+    else{
+        plan = await onlineSolver(domain_coop, problem);
+    }
+    return plan;
 }
