@@ -160,7 +160,8 @@ client.onMsg(async (id, name, msg, reply) => {
                         reply({ type: "i_ignore_you" })
                     } else {
                         let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
-                        myAgent.push(["generate_plan", Infinity, partner_options[0], partner_status])
+                        if (!myAgent.intention_queue.some(intention => intention.predicate[0] == "generate_plan"))
+                            myAgent.push(["generate_plan", 9999, partner_options[0], partner_status])
                         reply({ type: "plan" })
                         console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "A Plan")
                         reply_for_plan = { time: 0 }
@@ -607,13 +608,18 @@ async function option_generation(caller_method_id) {       //??? migliorare perc
         let options_2 = options_by_parcels(false)
         //if i can generate options, means that we block each other and can be that
         // we maybe need to call the planner
-        if (options_2.length != 0 && options_2[0][0]!="go_pick_up") {
+        if (options_2.length != 0 && options_2[0][0] != "go_pick_up") {
             if (global.communication.partner_id) {
+                let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
+                if(current_intention !==undefined && current_intention.predicate[0]=="following:plan") return
                 let reply = await ask_teammate("you_block_me", { status: global.me, options: options_2 })
-                console.log(colors.blue + "[opt_gen]" + resetColor + "The Allied sent a plan");
-                if (reply.type == "plan")
-                    myAgent.push(["follow_plan", Infinity, reply.obj])
-            }
+                console.log(reply,"🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
+                if (reply.type == "plan") {
+                    console.log(colors.blue + "[opt_gen]" + resetColor + "The partner decided for a common plan");
+                    if (!myAgent.intention_queue.some(intention => intention.predicate[0] == "follow_plan"))
+                        myAgent.push(["follow_plan", 9999, reply.obj])
+                }
+            } else console.log(colors.blue + "[opt_gen]" + resetColor + "Is ignoring me");
         }
     }
 
@@ -794,7 +800,7 @@ class IntentionRevisionReplace extends IntentionRevision {
         // Check if already queued
         const last = this.intention_queue.at(this.intention_queue.length - 1);
         //if (last && last.predicate.join(' ') == predicate.join(' ')) {
-        if (!(predicate[0] == "generate_plan" || predicate[0] == "follow_plan")){
+        if (!(predicate[0] == "generate_plan" || predicate[0] == "follow_plan")) {
             if (last) {
                 if (logs) console.log("[Intentions]---check-if-replace------>", last.predicate, "----with----", predicate);
                 /*for(let i=0; i<=1000000000;i++){
@@ -877,7 +883,7 @@ class Intention {
         if (this.#parent && this.#parent.log)
             this.#parent.log('\t', ...args)
         else
-            if (logs) console.log(...args)
+            console.log(...args)
     }
 
     #started = false;
@@ -890,40 +896,41 @@ class Intention {
             return this;
         else
             this.#started = true;
+
         // Trying all plans in the library
         for (const planClass of planLibrary) {
 
             // if stopped then quit
-            if (this.stopped) throw ['[achieve intent]stopped intention', ...this.predicate];
+            if (this.stopped) throw ['stopped intention', ...this.predicate];
 
             // if plan is 'statically' applicable
-            if (planClass.isApplicableTo(this.predicate[0])) {
+            if (planClass.isApplicableTo(...this.predicate)) {
                 // plan is instantiated
-                this.#current_plan = new planClass(this.#parent);
-                this.log('[achieve intent]achieving intention', ...this.predicate, 'with plan', planClass.name);
+                this.#current_plan = new planClass(this.parent);
+                this.log('achieving intention', ...this.predicate, 'with plan', planClass.name);
                 // and plan is executed and result returned
                 try {
                     const plan_res = await this.#current_plan.execute(...this.predicate);
-                    this.log('[achieve intent] succesful intention', ...this.predicate, 'with plan', planClass.name, 'with result:', plan_res);
+                    this.log('succesful intention', ...this.predicate, 'with plan', planClass.name, 'with result:', plan_res);
                     return plan_res
                     // or errors are caught so to continue with next plan
                 } catch (error) {
-                    this.log('[achieve intent]failed intention', ...this.predicate, 'with plan', planClass.name, 'with error:', error);
+                    console.log(error)
+                    this.log('failed intention', ...this.predicate, 'with plan', planClass.name, 'with error:', ...error);
                 }
             }
 
         }
 
         // if stopped then quit
-        if (this.stopped) throw ['[achive intent]stopped intention', ...this.predicate];
+        if (this.stopped) throw ['stopped intention', ...this.predicate];
 
         // no plans have been found to satisfy the intention
         // this.log( 'no plan satisfied the intention ', ...this.predicate );
-        throw ['[achive intent]no plan satisfied the intention ', ...this.predicate]
+        throw ['no plan satisfied the intention ', ...this.predicate]
     }
 
-}
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+}///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /**
  * Plan library
  */
@@ -981,6 +988,7 @@ class Plan_single extends Plan {
 
     async execute(intention, priority, x, y) {
         let plan = await generate_plan(intention, x, y, 0);
+        console.log("executing:", intention, priority, x, y)
         if (this.stopped) throw ['stopped'];
         if (!plan || plan.length === 0) {
             if (logs) console.log(colors.green + "[plan]" + resetColor + "plan not found" + resetColor);
@@ -1057,7 +1065,13 @@ class Plan_single extends Plan {
     }
 }
 
-
+const wait_response = callback=>{
+    console.log("received", reply_for_plan)
+    if(last_response !=reply_for_plan.time)
+        return reply_for_plan
+    else return false
+}
+var last_response = 0
 
 class Plan_coop extends Plan {
 
@@ -1065,7 +1079,9 @@ class Plan_coop extends Plan {
         return (intention == 'generate_plan'); //???? non so cosa ci va
     }
     async execute(intention, priority, partner_option, partner_status) {
-        partner = { x: Math.round(partner_status.x), y: Math.round(partner_status.y),id:partner_status.id }
+        console.log("executing:", intention, priority, partner_option, partner_status)
+
+        partner = { x: Math.round(partner_status.x), y: Math.round(partner_status.y), id: partner_status.id }
         let plan = await generate_plan(partner_option[0], partner_option[2], partner_option[3], 1);
         if (this.stopped) throw ['stopped']; //???? send the 'stap waiting' message
         if (!plan || plan.length === 0) {
@@ -1073,10 +1089,13 @@ class Plan_coop extends Plan {
             throw ['failed (no plan found)'];
         }
         else {
-            let last_response = 0
             let reply = null;
             for (let step of plan) {
-                while (reply_for_plan.time == last_response) { }
+                while (reply_for_plan.time == last_response) {
+                    console.log(reply_for_plan)
+                 wait_response().this()
+
+                }
                 if (reply_for_plan.msg == "stop") {
                     throw ["stopped by partner"]
                 }
@@ -1085,6 +1104,7 @@ class Plan_coop extends Plan {
                 if (action == "MOVE_COOP") {
                     let [ag, ag2, from, to] = step.args;
                     if (ag == "PARTNER") {
+                        console.log({ obj: step, msg: "go" })
                         reply({ obj: step, msg: "go" })
                         //send(partner step); //???? send the instruction and wait
                         //wait partner completition of the action
@@ -1179,11 +1199,12 @@ class Plan_receiver extends Plan {
         return (intention == 'follow_plan'); //???? non so cosa ci va
     }
 
-    async execute() { //???? adattala come vuoi
+    async execute(intention, priority) { //???? adattala come vuoi
+
         let plan_terminated = false
         while (!plan_terminated) {  //???? set to receive the terminal message
             let step //= wait_instruction //????
-
+            console.log("pollo")
             let reply = await client.ask({ type: "following", msg: "i'm here" })
             if (reply.msg == "stop")
                 break
@@ -1299,7 +1320,7 @@ async function generate_plan(intention, x, y, coop) { //???? riposizionare al te
         const agent = agent_obj[1];
         agent.x = Math.round(agent.x);
         agent.y = Math.round(agent.y);
-        if (coop && (agent.id == partner.id)) {
+        if ((coop && (agent.id == partner.id))||agent.id == global.me.id) {
             continue;
         }
         if (agent.x - 1 >= 0) {
