@@ -10,8 +10,7 @@ const communication_logs = true;
 
 
 //???? to arrange
-const coop = false;
-const partner = 0;
+var partner = 0;
 global.communication = { partner_id: null, master: false }
 
 
@@ -105,94 +104,77 @@ client.onMsg(async (id, name, msg, reply) => {
                         if (communication_logs)
                             console.log(colors.bgmagenta, "[PartnerMessage] after ", resetColor, colors.blue, ut.printBeliefAgents(beliefSet_agents), resetColor)
                     }
-                } else
-                    if (msg.type == "beliefset_parcels") {
-                        let obj = ut.jsonToMap(msg.obj)
-                        console.log(colors.bgmagenta, "[PartnerMessage] before ", resetColor, colors.yellow,
-                            msg.obj, "obj:\n", ut.printBeliefParcels(obj))
-                        if (obj.size > 0) {
-                            for (const [key, a] of obj) {
-                                a.viewable = false
-                                if (beliefSet_parcels.has(a.id)) {
-                                    if (a.time < beliefSet_parcels.get(a.id).time) {
-                                        beliefSet_parcels.set(a.id, a)
-                                    }
-                                } else beliefSet_parcels.set(a.id, a)
-                            }
-                            console.log(colors.bgmagenta, "[PartnerMessage] after ", resetColor, colors.yellow, ut.printBeliefParcels(beliefSet_parcels), resetColor)
-                        }
-                    } else if (msg.type == "option_communication") {
-                        let partner_options = msg.obj
-                        console.log(colors.bgmagenta, "[PartnerMessage] option communication ", resetColor, partner_options)
-
-                        let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
-                        if (current_intention) {
-                            /* console.log(colors.bgmagenta, "[PartnerMessage]  Comparing: partner:", resetColor, partner_options[0], "---> mine:", current_intention.predicate)
-                            console.log((current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3]),
-                                (partner_options[0][0] === "go_pick_up" || partner_options[0][0] === "go_to"),
-                                (current_intention.predicate[1] > partner_options[0][1]),
-                                (current_intention.predicate[1] == partner_options[0][1] && global.me.id > communication.partner_id))
-
-                            if ((current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3]) && // same end Position
-                                (partner_options[0][0] === "go_pick_up" || partner_options[0][0] === "go_to") && // these actions
-                                (current_intention.predicate[1] > partner_options[0][1] || (current_intention.predicate[1] == partner_options[0][1] && global.me.id > communication.partner_id)) // if the priority is the same if,I'm bigger i go
-                            ) {
-                                console.log(colors.bgmagenta, "[Reply]  I'm on my way, generate another" + resetColor)
-                                reply({ type: "generate_another" })
-                            } else {
-                                reply({ type: "go_ahead" })
-                                console.log(colors.bgmagenta, "[Reply]  I'm generating another options", resetColor)
-                                if (partner_options[0][0] == "go_pick_up")
-                                    forget_parcel_id = partner_options[0]
-                                else if (partner_options[0][0] == "go_to") {
-                                    forget_position = [partner_options[0][2], partner_options[0][3]]
+                } else if (msg.type == "beliefset_parcels") {
+                    let obj = ut.jsonToMap(msg.obj)
+                    console.log(colors.bgmagenta, "[PartnerMessage] before ", resetColor, colors.yellow,
+                        msg.obj, "obj:\n", ut.printBeliefParcels(obj))
+                    if (obj.size > 0) {
+                        for (const [key, a] of obj) {
+                            a.viewable = false
+                            if (beliefSet_parcels.has(a.id)) {
+                                if (a.time < beliefSet_parcels.get(a.id).time) {
+                                    beliefSet_parcels.set(a.id, a)
                                 }
-                                current_intention.stop()
-                                option_generation(4)
-                            } */
-                            if (partner_options[0][0] == "go_pick_up" || partner_options[0][0] == "go_to") {
-                                if (partner_options[0][0] == "go_to" && current_intention.predicate[0] == partner_options[0][0] && (current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3])) {
-
-                                    forget_position = [partner_options[0][2], partner_options[0][3]]
-
-                                } else {
-                                    if (partner_options[0][0] == "go_pick_up" && current_intention.predicate[0] == partner_options[0][0] && (current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3])) {
-                                        if (partner_options[0][1] >= current_intention.predicate[1] || (partner_options[0][1] == current_intention.predicate[1]&&global.communication.partner_id>global.me.id)){
-                                            reply({ type: "go_ahead" })
-                                            current_intention.stop()
-                                            forget_parcel_id = partner_options[0][4]
-                                            option_generation(4)
-                                        }else{
-                                            reply({ type: "generate_another" })
-                                        }
-                                    } else {
-                                        reply({ type: "go_ahead" })
-                                    }
-                                }
-                            }
-                            else {
-                                reply({ type: "go_ahead" })
-                            }
-
-                        } else reply({ type: "go_ahead" })
-
-                    } else if (msg.type == "you_block_me") {
-                        let partner_options = msg.obj.options
-                        let partner_status = msg.obj.status
-                        console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, "I'm Blocking: partner asks for help")
-                        if ((last_options[0][0] == "go_deliver" || last_options[0][0] == "go_pick_up") && last_options[0][1] - partner_options[0][1] > 2) {
-                            console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "I_ignore_you")
-                            reply({ type: "i_ignore_you" })
-                        } else {
-                            reply({ type: "plan", obj: ["💬", "💬", "💬", "💬", "💬", "💬", "💬"] })
-                            console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "A Plan")
+                            } else beliefSet_parcels.set(a.id, a)
                         }
+                        console.log(colors.bgmagenta, "[PartnerMessage] after ", resetColor, colors.yellow, ut.printBeliefParcels(beliefSet_parcels), resetColor)
                     }
-                    else { console.log("⚠️⚠️⚠️" + colors.red + " TEAMMATE SENT A NON SUPPORTED MESSAGE TYPE" + resetColor) }
+                } else if (msg.type == "option_communication") {
+                    let partner_options = msg.obj
+                    console.log(colors.bgmagenta, "[PartnerMessage] option communication ", resetColor, partner_options)
+
+                    let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
+                    if (current_intention) {
+                        if (partner_options[0][0] == "go_pick_up" || partner_options[0][0] == "go_to") {
+                            if (partner_options[0][0] == "go_to" && current_intention.predicate[0] == partner_options[0][0] && (current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3])) {
+
+                                forget_position = [partner_options[0][2], partner_options[0][3]]
+
+                            } else {
+                                if (partner_options[0][0] == "go_pick_up" && current_intention.predicate[0] == partner_options[0][0] && (current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3])) {
+                                    if (partner_options[0][1] >= current_intention.predicate[1] || (partner_options[0][1] == current_intention.predicate[1] && global.communication.partner_id > global.me.id)) {
+                                        reply({ type: "go_ahead" })
+                                        current_intention.stop()
+                                        forget_parcel_id = partner_options[0][4]
+                                        option_generation(4)
+                                    } else {
+                                        reply({ type: "generate_another" })
+                                    }
+                                } else {
+                                    reply({ type: "go_ahead" })
+                                }
+                            }
+                        }
+                        else {
+                            reply({ type: "go_ahead" })
+                        }
+
+                    } else reply({ type: "go_ahead" })
+
+                } else if (msg.type == "you_block_me") {
+                    let partner_options = msg.obj.options
+                    let partner_status = msg.obj.status
+                    console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, "I'm Blocking: partner asks for help")
+                    if ((last_options[0][0] == "go_deliver" || last_options[0][0] == "go_pick_up") && last_options[0][1] - partner_options[0][1] > 2) {
+                        console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "I_ignore_you")
+                        reply({ type: "i_ignore_you" })
+                    } else {
+                        let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
+                        myAgent.push(["generate_plan", Infinity, partner_options[0], partner_status])
+                        reply({ type: "plan" })
+                        console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "A Plan")
+                        reply_for_plan = { time: 0 }
+                    }
+                } else if (msg.type == "following") {
+                    reply_for_plan = { time: Date.now(), reply: reply, msg: msg }
+                } else { console.log("⚠️⚠️⚠️" + colors.red + " TEAMMATE SENT A NON SUPPORTED MESSAGE TYPE" + resetColor, msg) }
             } else//non partner messages
                 if (communication_logs)
                     console.log("received:", id, name, msg, reply)
 });
+var reply_for_plan = null
+
+
 
 var last_message_sent = 0;
 
@@ -591,7 +573,8 @@ var last_options = null;
 
 var forget_position = null
 let last_option_generated = 0
-async function option_generation(caller_method_id) {             //??? migliorare percorsi
+async function option_generation(caller_method_id) {       //??? migliorare percorsi
+
 
     if (Date.now() - last_option_generated > 300) {
         last_option_generated = Date.now();
@@ -624,12 +607,12 @@ async function option_generation(caller_method_id) {             //??? migliorar
         let options_2 = options_by_parcels(false)
         //if i can generate options, means that we block each other and can be that
         // we maybe need to call the planner
-        if (options_2.length != 0) {
+        if (options_2.length != 0 && options_2[0][0]!="go_pick_up") {
             if (global.communication.partner_id) {
                 let reply = await ask_teammate("you_block_me", { status: global.me, options: options_2 })
                 console.log(colors.blue + "[opt_gen]" + resetColor + "The Allied sent a plan");
                 if (reply.type == "plan")
-                    options.push["follow_plan", 999, reply.obj]
+                    myAgent.push(["follow_plan", Infinity, reply.obj])
             }
         }
     }
@@ -672,7 +655,7 @@ async function option_generation(caller_method_id) {             //??? migliorar
         }
 
         options.sort(function (a, b) {
-            return a[1] - b[1];
+            return b[1] - a[1];
         });
     }
 
@@ -811,21 +794,23 @@ class IntentionRevisionReplace extends IntentionRevision {
         // Check if already queued
         const last = this.intention_queue.at(this.intention_queue.length - 1);
         //if (last && last.predicate.join(' ') == predicate.join(' ')) {
-        if (last) {
-            if (logs) console.log("[Intentions]---check-if-replace------>", last.predicate, "----with----", predicate);
-            /*for(let i=0; i<=1000000000;i++){
-            }*/
-            if ((last.predicate[0] == predicate[0]) && (last.predicate[2] == predicate[2]) && (last.predicate[3] == predicate[3])) {
-                last.predicate[1] = predicate[1];
-                return;
-            }
-            else if (last.predicate[1] > predicate[1]) {
-                return; // intention is already being achieved
-            }
+        if (!(predicate[0] == "generate_plan" || predicate[0] == "follow_plan")){
+            if (last) {
+                if (logs) console.log("[Intentions]---check-if-replace------>", last.predicate, "----with----", predicate);
+                /*for(let i=0; i<=1000000000;i++){
+                }*/
+                if ((last.predicate[0] == predicate[0]) && (last.predicate[2] == predicate[2]) && (last.predicate[3] == predicate[3])) {
+                    last.predicate[1] = predicate[1];
+                    return;
+                }
+                else if (last.predicate[1] > predicate[1]) {
+                    return; // intention is already being achieved
+                }
 
-        }
-        else {
-            if (logs) console.log("[Intentions] ---> no last in the queue");
+            }
+            else {
+                if (logs) console.log("[Intentions] ---> no last in the queue");
+            }
         }
 
         if (logs) console.log('[Intentions] ---> IntentionRevisionReplace.push', predicate);
@@ -1077,22 +1062,30 @@ class Plan_single extends Plan {
 class Plan_coop extends Plan {
 
     static isApplicableTo(intention) {
-        return (intention == 'nothing'); //???? non so cosa ci va
+        return (intention == 'generate_plan'); //???? non so cosa ci va
     }
-    async execute(intention, priority, x, y) {
-        let plan = await generate_plan(intention, x, y, 1);
+    async execute(intention, priority, partner_option, partner_status) {
+        partner = { x: Math.round(partner_status.x), y: Math.round(partner_status.y),id:partner_status.id }
+        let plan = await generate_plan(partner_option[0], partner_option[2], partner_option[3], 1);
         if (this.stopped) throw ['stopped']; //???? send the 'stap waiting' message
         if (!plan || plan.length === 0) {
             if (logs) console.log(colors.green + "[plan]" + resetColor + "plan not found" + resetColor);
             throw ['failed (no plan found)'];
         }
         else {
+            let last_response = 0
+            let reply = null;
             for (let step of plan) {
-                if (this.stopped) throw ['stopped']; //???? send the 'stap waiting' message
+                while (reply_for_plan.time == last_response) { }
+                if (reply_for_plan.msg == "stop") {
+                    throw ["stopped by partner"]
+                }
+                reply = reply_for_plan.reply
                 let action = step.action;
                 if (action == "MOVE_COOP") {
                     let [ag, ag2, from, to] = step.args;
                     if (ag == "PARTNER") {
+                        reply({ obj: step, msg: "go" })
                         //send(partner step); //???? send the instruction and wait
                         //wait partner completition of the action
                     }
@@ -1172,20 +1165,29 @@ class Plan_coop extends Plan {
                     }
                 }
             }
+            reply({ msg: "stop" })
+
             //send(partner plan_terminated); //???? send the 'stap waiting' message
             return "success";
+
         }
     }
 }
 
 class Plan_receiver extends Plan {
     static isApplicableTo(intention) {
-        return (intention == 'nothing'); //???? non so cosa ci va
+        return (intention == 'follow_plan'); //???? non so cosa ci va
     }
 
     async execute() { //???? adattala come vuoi
+        let plan_terminated = false
         while (!plan_terminated) {  //???? set to receive the terminal message
             let step //= wait_instruction //????
+
+            let reply = await client.ask({ type: "following", msg: "i'm here" })
+            if (reply.msg == "stop")
+                break
+            step = reply
             let action = step.action;
             if (action == "MOVE") {
                 let [ag, ag2, from, to] = step.args;
@@ -1336,7 +1338,7 @@ async function generate_plan(intention, x, y, coop) { //???? riposizionare al te
         }
     }
     else {
-        myBeliefset.declare(`on partner p${me.x}_${me.y}`);
+        myBeliefset.declare(`on partner p${partner.x}_${partner.y}`);
         myBeliefset.declare(`different partner me`);
         myBeliefset.declare(`different me partner`);
         if (intention == 'go_deliver') {

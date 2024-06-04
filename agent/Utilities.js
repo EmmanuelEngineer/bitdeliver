@@ -123,7 +123,7 @@ export class Utilities {
     for (let agent of agents) {
       if (agent == undefined) continue
       try {
-        if (!((consider_partner && agent.id == global.communication.partner_id) && global.me.id != agent.id))
+        if (global.me.id != agent.id && (consider_partner && agent.id == global.communication.partner_id))
           //mark obstacles on the grid
           grid[Math.round(agent.x)][Math.round(agent.y)] = 1;
       } catch (err) { console.log(ut.printBeliefAgents, err) }
