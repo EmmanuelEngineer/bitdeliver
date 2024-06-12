@@ -126,7 +126,7 @@ export class Utilities {
         if (global.me.id != agent.id && (consider_partner && agent.id == global.communication.partner_id))
           //mark obstacles on the grid
           grid[Math.round(agent.x)][Math.round(agent.y)] = 1;
-      } catch (err) { console.log(ut.printBeliefAgents, err) }
+      } catch (err) { console.log("ERROR ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️",ut.printBeliefAgents, err) }
     }
     //console.log(this.printGrid(grid))
     return grid;
