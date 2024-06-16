@@ -4,14 +4,38 @@ import { Utilities as ut } from "./Utilities.js"
 import { onlineSolver, PddlExecutor, PddlProblem, Beliefset, PddlDomain, PddlAction } from "@unitn-asa/pddl-client";
 
 const logs = true;
-const save_pddl = true; //in ./tmp
+const save_pddl = false; //in ./tmp
 const communication_logs = true;
 
+const message_delay = 200
+const preferable_tile_dimension = 3
+const minimum_time_to_delete_belief = 7000
+const option_generation_delay = 100
+const killing_time_for_next_step_of_plan = 2000
+const refresh_time_for_plan = 200
 
-//???? to arrange
+
+
+
+
+const colors = {
+    yellow: '\x1b[33m',
+    blue: '\x1b[34m',
+    red: '\x1b[31m',
+    green: '\x1b[32m',
+    bgmagenta: "\x1b[45m",
+    bgcyan: "\x1b[46m"
+    //yellowAndWhite: '\x1b[33;47m'
+};
+const resetColor = '\x1b[0m';
+
+
+var plan_following_status = { active: false, last_message_received: 0 }
+
+
+//object that represent partner status 
 var partner = 0;
 global.communication = { partner_id: null, master: false }
-
 
 let token = ""
 let name = ""
@@ -35,7 +59,6 @@ client.onYou(({ id, name, x, y, score }) => {
 
 //====================================================================================message
 
-global.communication = { master: false, partner_id: null }
 
 //broadcast to let the other agent know that there is a connection available
 const partner_interval = setInterval(
@@ -82,12 +105,13 @@ client.onMsg(async (id, name, msg, reply) => {
             }
             else console.log("⚠️⚠️⚠️" + colors.red + " the handshake didn't respect the protocol" + resetColor)
         } else
-            //communication between partners has protocol the excange of messages  msg.type and msg.obj
+            //communication between partners has protocol the exchange of messages  msg.type and msg.obj
             if (id == global.communication.partner_id) {//if is the partner
                 if (communication_logs)
                     console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, msg.type)
 
                 if (msg.type == "beliefset_agents") {
+                    //make the partner aware of other agents in the his blind side
                     let obj = ut.jsonToMap(msg.obj)
                     if (obj.size > 0) {
                         console.log(colors.bgmagenta, "[PartnerMessage] before ", resetColor, colors.blue,
@@ -95,6 +119,7 @@ client.onMsg(async (id, name, msg, reply) => {
                         for (const [key, a] of obj) {
                             a.viewable = false
                             if (beliefSet_agents.has(a.id)) {
+                                //check for who has the last update on an agent
                                 if (a.time > beliefSet_agents.get(a.id).time) {
                                     beliefSet_agents.set(a.id, a)
                                 }
@@ -110,6 +135,7 @@ client.onMsg(async (id, name, msg, reply) => {
                     if (obj.size > 0) {
                         for (const [key, a] of obj) {
                             a.viewable = false
+                            //check for who has the last update on a parcel
                             if (beliefSet_parcels.has(a.id)) {
                                 if (a.time > beliefSet_parcels.get(a.id).time) {
                                     beliefSet_parcels.set(a.id, a)
@@ -119,26 +145,40 @@ client.onMsg(async (id, name, msg, reply) => {
                         console.log(colors.bgmagenta, "[PartnerMessage] after ", resetColor, colors.yellow, ut.printBeliefParcels(beliefSet_parcels), resetColor)
                     }
                 } else if (msg.type == "option_communication") {
+                    //The partner communication on the most probable option that can became an intention
                     let partner_options = msg.obj
                     forget_parcel_id = null;
                     console.log(colors.bgmagenta, "[PartnerMessage] option communication ", resetColor, partner_options)
-                    if (!reply){ 
+                    if (!reply) {
                         return;
                     }
                     let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
                     if (current_intention) {
-                        if (!(partner_options[0][0] == "generate_plan" || partner_options[0][0] == "follow_plan") &&
+                        // 
+                        if (!(partner_options[0][0] == "generate_plan" || partner_options[0][0] == "follow_plan") ||
                             !(current_intention.predicate[0] == "generate_plan" || current_intention.predicate[0] == "follow_plan")) {
                             await myAgent.remove_plan()
                         }
+                        // if me and the partner have the same intention, which will have a better reward on it
                         if (partner_options[0][0] == "go_pick_up" || partner_options[0][0] == "go_to") {
-                            if (partner_options[0][0] == "go_to" && current_intention.predicate[0] == partner_options[0][0] && (current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3])) {
+                            // if i have the worst possible reward going somewhere(I'm more distant for example),
+                            // i have to forget that position and tell the other to go_ahead
 
+                            if (partner_options[0][0] == "go_to" &&
+                                current_intention.predicate[0] == partner_options[0][0] &&
+                                (current_intention.predicate[2] == partner_options[0][2] &&
+                                    current_intention.predicate[3] == partner_options[0][3])) {
                                 forget_position = { coordinates: [partner_options[0][2], partner_options[0][3]], time: Date.now() }
-
                             } else {
-                                if (partner_options[0][0] == "go_pick_up" && current_intention.predicate[0] == partner_options[0][0] && (current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3])) {
-                                    if (partner_options[0][1] >= current_intention.predicate[1] || (partner_options[0][1] == current_intention.predicate[1] && global.communication.partner_id > global.me.id)) {
+                                // if there is a packet to pick up, if i'm nearer(major reward) that i will go to pick it up and the other one must forget
+                                if (partner_options[0][0] == "go_pick_up" &&
+                                    current_intention.predicate[0] == partner_options[0][0] &&
+                                    (current_intention.predicate[2] == partner_options[0][2] &&
+                                        current_intention.predicate[3] == partner_options[0][3])) {
+                                    if (partner_options[0][1] >= current_intention.predicate[1] ||
+                                        (partner_options[0][1] == current_intention.predicate[1] &&
+                                            global.communication.partner_id > global.me.id)
+                                    ) {
                                         reply({ type: "go_ahead" })
                                         current_intention.stop()
                                         forget_parcel_id = partner_options[0][4]
@@ -154,24 +194,26 @@ client.onMsg(async (id, name, msg, reply) => {
                         else {
                             reply({ type: "go_ahead" })
                         }
-
                     } else reply({ type: "go_ahead" })
 
                 } else if (msg.type == "you_block_me") {
+                    // sent by partner to tell me that i'm blocking his action
+                    console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, "I'm Blocking: partner asks for help")
                     let partner_options = msg.obj.options
                     let partner_status = msg.obj.status
-                    myAgent.remove_plan()
-                    console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, "I'm Blocking: partner asks for help")
+                    // if i can do something else, than i will go forward for my way and ignore the partner
                     if ((last_options[0][0] == "go_deliver" || last_options[0][0] == "go_pick_up") &&
                         last_options[0][1] - partner_options[0][1] > 2) {
-                        //I'm doing something, go away
                         console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "I_ignore_you")
                         reply({ type: "i_ignore_you" })
                     } else {
+                        // if i cannot do anything let's start a plan that works for both
                         let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
                         let intentions = [...myAgent.intention_queue.values()]
+                        // if there isn't another plan related intention, lets' promote the option in an intention
                         if (!intentions.some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))
                             await myAgent.push(["generate_plan", 9999, partner_options[0], partner_status])
+                        // preparing for the plan execution
                         reply_for_plan = { time: 0, status: "not_received" }
                         reply({ type: "plan" })
                         console.log(colors.bgmagenta, "[Reply] option communication ", resetColor, colors.red, "Responding with, preparin plan")
@@ -179,12 +221,14 @@ client.onMsg(async (id, name, msg, reply) => {
 
                     }
                 } else if (msg.type == "release_me") {
+                    // the plan uses the await ask as a syncronization mechanism, so in case of any error the partner can ask me to reply to an ask
                     try { reply_for_plan.reply({ msg: "stop" }) } catch (err) { console.log(err) }
                 } else if (msg.type == "following") {
                     let intentions = [...myAgent.intention_queue.values()]
+                    // the plan uses the await ask as a syncronization mechanism,
                     if (intentions.some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))
                         reply_for_plan = { time: Date.now(), reply: reply, msg: msg, status: "received" }
-                    else reply({msg:"stop"})
+                    else reply({ msg: "stop" })
                 } else { console.log("⚠️⚠️⚠️" + colors.red + " TEAMMATE SENT A NON SUPPORTED MESSAGE TYPE" + resetColor, msg) }
             } else//non partner messages
                 if (communication_logs)
@@ -195,17 +239,15 @@ var reply_for_plan = null
 
 
 var last_message_sent = 0;
-
+// to avoid too many messages there is a timer in the 
 function message_timer() {
-    if (Date.now() - last_message_sent > 700) {
+    if (Date.now() - last_message_sent > message_delay) {
         last_message_sent = Date.now();
         return true
     } else return false
 }
 
 function say_to_teammate(msg_type, obj) {
-    //if (communication_logs) console.log("Sending:", { type: msg_type, obj:obj })
-
     let message = "";
     if (obj instanceof Map)
         message = ut.mapToJSON(obj)
@@ -227,15 +269,16 @@ async function ask_teammate(msg_type, obj) {
     return await client.ask(global.communication.partner_id, { type: msg_type, obj: message })
 }
 //====================================================================================message
-
+// function to determine where are some preferable position to be, given the spawnable tiles
 function generate_favorite_coordinates() {
     const temporaryGridMap = Array.from({ length: map.width }, () => Array(map.height).fill(0));
     let maxValue = Number.NEGATIVE_INFINITY;
     for (let tile of map.spawnable_tiles) {
         const { x, y } = tile;
         temporaryGridMap[x][y] += 1;
-        for (let i = x - 3; i <= x + 3; i++) {
-            for (let j = y - 3; j <= y + 3; j++) {
+        //for each square determine the number of nearest spawnable tiles
+        for (let i = x - preferable_tile_dimension; i <= x + preferable_tile_dimension; i++) {
+            for (let j = y - preferable_tile_dimension; j <= y + preferable_tile_dimension; j++) {
                 if ((i >= 0) && (i < map.width) && (j >= 0) && (j < map.height)) {
                     temporaryGridMap[i][j] += 1;
                     if (temporaryGridMap[i][j] > maxValue) {
@@ -263,7 +306,7 @@ function distance_manhattan(a, b) {
     const dy = Math.abs(Math.round(a.y) - Math.round(b.y))
     return dx + dy;
 }
-
+// use an a* pathfinder to determine the effective distance between points
 function distance_path(a, b, consider_partner) {
     let path = pathfind(a, b, consider_partner);
     if (path == null)
@@ -343,6 +386,7 @@ client.onConfig((config_input) => {
     //if(logs) console.log(config.MOVEMENT_DURATION);
 })
 
+//to avoid ghost parcels
 function delete_put_down() {
     const idsToDelete = [];
     for (const p of beliefSet_parcels.values()) {
@@ -450,16 +494,7 @@ function init_domains() {
 }
 
 
-const colors = {
-    yellow: '\x1b[33m',
-    blue: '\x1b[34m',
-    red: '\x1b[31m',
-    green: '\x1b[32m',
-    bgmagenta: "\x1b[45m",
-    bgcyan: "\x1b[46m"
-    //yellowAndWhite: '\x1b[33;47m'
-};
-const resetColor = '\x1b[0m';
+
 
 let domain; //??aggiunto domains single and coop
 let domain_coop;
@@ -467,7 +502,7 @@ init_domains();
 const myMapBeliefset = []; //??aggiunto questo e grid +funz init emodifiche onMap
 let grid = {};
 const map = {};
-let max_time = 1000;
+let max_time = 0;
 
 var delivery_grid = []//used for quick reference for when i pass on a delivery point
 var favorite_position_choosing_time;
@@ -487,11 +522,9 @@ client.onMap((width, height, tiles) => {
     }
     map.delivery_tiles = delivery_tiles;
     map.spawnable_tiles = spawnable_tiles;
-
-    //if(logs) console.log("CARATTERISTICHE MAPPA", width, height, tiles);
-
+    //determine the time of deletion of parcels
     max_time = map.width * map.height * config.MOVEMENT_DURATION / 10;
-    if (max_time < 7000) max_time = 7000;
+    if (max_time < minimum_time_to_delete_belief) max_time = minimum_time_to_delete_belief;
     map.favorite_coordinates = generate_favorite_coordinates();
     if (logs) console.log("favorite coordinates", map.favorite_coordinates);
     init_myMapBeliefset();
@@ -508,6 +541,8 @@ client.onAgentsSensing((agents) => { //intanto no memoria sugli agenti
     updateAgentsBelief(agents);
 })
 
+
+// is made as a independent function to update the times of the last seen.
 function updateAgentsBelief(agents) {
     let idsToDelete = [];
 
@@ -520,7 +555,7 @@ function updateAgentsBelief(agents) {
     for (const a of beliefSet_agents.values()) {
         //viewable
         if (!agents.some(agent => agent.id === a.id)) {
-            if (distance_manhattan(global.me, a) <= config.AGENTS_OBSERVATION_DISTANCE && Date.now() - a.time > 7000) {
+            if (distance_manhattan(global.me, a) <= config.AGENTS_OBSERVATION_DISTANCE && Date.now() - a.time > max_time) {
                 if (logs) console.log(colors.yellow + "[onAgents]" + resetColor + "delete agent memory (lost track):", a);
                 idsToDelete.push(a.id);
             }
@@ -548,7 +583,7 @@ client.onParcelsSensing(parcels => {
     updateParcelsBelief(parcels);
 })
 
-// is made as a indipendent funciton to update the times of the last seen.
+// is made as a independent function to update the times of the last seen.
 function updateParcelsBelief(parcels) {
 
     parcel_grid = Array.from({ length: map.height }, () => Array(map.width).fill(false));
@@ -572,24 +607,23 @@ function updateParcelsBelief(parcels) {
                 if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (carried):", p);
                 idsToDelete.push(p.id);
             }
-            else
-                if (!parcels.some(parcel => parcel.id === p.id)) {
-                    if (distance_manhattan(global.me, p) <= config.PARCELS_OBSERVATION_DISTANCE) {
-                        if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (lost track):", p);
+            else if (!parcels.some(parcel => parcel.id === p.id)) {
+                if (distance_manhattan(global.me, p) <= config.PARCELS_OBSERVATION_DISTANCE) {
+                    if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (lost track):", p);
+                    idsToDelete.push(p.id);
+                }
+                else if (Date.now() - p.time > decay_time) {
+                    p.reward -= Math.floor((Date.now() - p.time) / decay_time);
+                    if (p.reward > 2) {
+                        p.time = Date.now();
+                        beliefSet_parcels.set(p.id, p);
+                    }
+                    else {
+                        if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (expired somewhere):", p);
                         idsToDelete.push(p.id);
                     }
-                    else if (Date.now() - p.time > decay_time) {
-                        p.reward -= Math.floor((Date.now() - p.time) / decay_time);
-                        if (p.reward > 2) {
-                            p.time = Date.now();
-                            beliefSet_parcels.set(p.id, p);
-                        }
-                        else {
-                            if (logs) console.log(colors.yellow + "[onParcels]" + resetColor + "delete parcel memory (expired somewhere):", p);
-                            idsToDelete.push(p.id);
-                        }
-                    }
                 }
+            }
             if (!p.carriedBy) {
                 parcel_grid[p.x][p.y] = true;
             }
@@ -612,13 +646,12 @@ var last_options = null;
 
 var forget_position = null
 let last_option_generated = 0
-async function option_generation(caller_method_id) {       //??? migliorare percorsi
-
-
-    if (Date.now() - last_option_generated > 300) {
+async function option_generation(caller_method_id) {
+    // to keep the 
+    if (Date.now() - last_option_generated > option_generation_delay) {
         last_option_generated = Date.now();
         //if the caller is the main loop, to avoid error, make it loop
-    } else if (caller_method_id == 3) while (Date.now() - last_option_generated > 300) { }
+    } else if (caller_method_id == 3) while (Date.now() - last_option_generated > option_generation_delay) { }
     else return
 
 
@@ -644,23 +677,21 @@ async function option_generation(caller_method_id) {       //??? migliorare perc
     if (options.length == 0) {
         //tryng to generate options without considering the partner as an obstacle
         let options_2 = options_by_parcels(false)
-        //if i can generate options, means that we block each other and can be that
+        //if i can generate options only when not considering the partner as enemy, means that we block each other and can be that
         // we maybe need to call the planner
-
-
 
         console.log(colors.bgcyan + "Maybe blocked for : " + resetColor,
             options_2)
 
         if (options_2.length != 0 && options_2[0][0] != "go_pick_up" &&
-            ![...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan"))) {
+            (![...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))) {
             if (global.communication.partner_id) {
                 {
                     let reply = await ask_teammate("you_block_me", { status: global.me, options: options_2 })
                     let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
                     console.log(reply.type == "plan", current_intention === undefined)
                     if (reply.type == "plan" &&
-                        (current_intention === undefined ||
+                        (current_intention === undefined ||// there can be multiple calls in parallel
                             !(current_intention.predicate[0] == "follow_plan" || current_intention.predicate[0] == "generate_plan"))) {
                         await myAgent.push(["follow_plan", 9999, reply.obj])
                         console.log(colors.blue + "[opt_gen]" + resetColor + "The partner decided for a common plan");
@@ -679,24 +710,19 @@ async function option_generation(caller_method_id) {       //??? migliorare perc
             say_to_teammate("option_communication", null)
         if (options.length == 0 || options[0][0] == "random_move") {
             if (logs) console.log(colors.blue + "[opt_gen]" + resetColor + "no option");
-            //let time = config.MOVEMENT_DURATION*map.favorite_coordinates.length;
             let option_is_generated = false;
             if (communication_logs && forget_position != null)
                 console.log(colors.bgmagenta + "[Generating Positions]" + resetColor + colors.blue + forget_position.coordinates + resetColor)
             for (let position of map.favorite_coordinates) {
                 //======message
                 if (forget_position != null && Date.now() - forget_position.time < 500 && forget_position.coordinates[0] == position.x && forget_position.coordinates[1] == position.y) continue;
-                /*                 if(distance_manhattan(me,position)>10){
-                                    continue;
-                                } */
                 if (global.me.x == position.x && global.me.y == position.y) {
                     position.time = Date.now();
                     continue;
                 }
-                //if(logs) console.log(position, Date.now()-position.time,config.MOVEMENT_DURATION)
                 if (Date.now() - position.time > max_time) {
+                    // using the distance path, if it returns null means that the agent cannot reach that point
                     let distance = distance_path(global.me, position, true);
-                    //if(logs) console.log("##########################",me,position,distance)
                     if (distance) {
                         //-100 to make the go_to always the worst option
                         options.push(["go_to", position.value - distance - 100, position.x, position.y]);
@@ -719,16 +745,14 @@ async function option_generation(caller_method_id) {       //??? migliorare perc
     /**
      * Best option is selected
      */
-    //====================================message
+    //====================================confrontation with the partner
     if (options[0]) {
-
+        // communicate the 
         if (global.communication.partner_id && (options[0][0] == "go_pick_up" || options[0][0] == "go_deliver" || options[0][0] == "go_to")) {
             if (message_timer()) {
                 let reply = await ask_teammate("option_communication", options)
-                if (reply.type == "plan") {
-                    //reply.obj
-                    console.log(colors.blue + "[opt_gen]" + resetColor + "received a plan", reply.obj)
-                } else if (reply.type == "go_with_second") {
+                if (reply.type == "go_with_second") {
+                    //use second option
                     last_options = options;
                     await myAgent.push(options[1])
                     return;
@@ -759,16 +783,21 @@ class IntentionRevision {
     async loop() {
         let loop_counter = 0;
         while (true) {
+            // keep the partner updated 
             if (global.communication.partner_id && message_timer()) {
                 say_to_teammate("beliefset_parcels", beliefSet_parcels)
                 beliefSet_agents.set(global.me.id, global.me)
                 say_to_teammate("beliefset_agents", beliefSet_agents)
-
+            }
+            // if stuck for some reason 
+            if (plan_following_status.active && Date.now() - plan_following_status.last_message_received > killing_time_for_next_step_of_plan) {
+                await this.remove_plan()
             }
 
             let current_intention = this.intention_queue.at(this.intention_queue.length - 1)
             if (current_intention !== undefined)
                 if (map.favorite_coordinates) {
+                    //if i see favorite coordinates, put it as seen if is not is where i was going
                     for (let coordinates in map.favorite_coordinates) {
                         if (!(current_intention.predicate[0] == "go_to" && current_intention.predicate[2] == coordinates.x && current_intention.predicate[3] == coordinates.y))
                             if (distance_manhattan(global.me, coordinates) <= config.PARCELS_OBSERVATION_DISTANCE)
@@ -805,7 +834,7 @@ class IntentionRevision {
                 if (logs) console.log(colors.red + "[main_loop]" + resetColor + "No intention found")
                 option_generation(3);
             }
-
+            // update beliefs for possible deletions
             if (Date.now() - lastParcelSensingTime > 7000) {
                 if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Generating empty parcelsensing event');
                 updateParcelsBelief([]);
@@ -838,7 +867,7 @@ class IntentionRevisionReplace extends IntentionRevision {
 
         // Check if already queued
         const last = this.intention_queue.at(this.intention_queue.length - 1);
-        //if (last && last.predicate.join(' ') == predicate.join(' ')) {
+        // if coop planning push the intention immediately
         if (!(predicate[0] == "generate_plan" || predicate[0] == "follow_plan")) {
             if (last) {
                 if (logs) console.log("[Intentions]---check-if-replace------>", last.predicate, "----with----", predicate);
@@ -861,6 +890,7 @@ class IntentionRevisionReplace extends IntentionRevision {
         if (logs) console.log('[Intentions] ---> IntentionRevisionReplace.push', predicate);
         const intention = new Intention(this, predicate);
         this.intention_queue.push(intention);
+        // if i'm changing plan release the other agent
         if (last) {
             if (last.predicate[0] == "generate_plan")
                 try { reply_for_plan.reply("stop") } catch (err) { console.log(err) }
@@ -870,7 +900,7 @@ class IntentionRevisionReplace extends IntentionRevision {
         }
     }
 
-    async remove_plan() {// the predicate is the same as desire or predicate
+    async remove_plan() {
         const last = this.intention_queue.at(this.intention_queue.length - 1);
         if (logs) console.log("[Intentions] ---> delete plan execution");
         if (last &&
@@ -1038,7 +1068,7 @@ class Plan {
 
 
 class Plan_single extends Plan {
-
+// Plan for the sigle agent
     static isApplicableTo(intention) {
         return (intention == 'go_pick_up' || intention == 'go_to' || intention == 'go_deliver');
     }
@@ -1110,11 +1140,12 @@ class Plan_single extends Plan {
                 } else if (action == "GRAB") {
                     let [ag, ob, pos] = step.args;
                     await client.pickup();
+                    updateParcelsBelief([]);
                     if (logs) console.log(colors.green + "[plan]" + resetColor + `${ag} grab ${ob} in ${pos}`);
                 } else if (action == "DROP") {
                     let [ag, ob, pos] = step.args;
                     await client.putdown();
-                    delete_put_down();
+                    updateParcelsBelief([]);
                     if (logs) console.log(colors.green + "[plan]" + resetColor + `${ag} drop ${ob} in ${pos}`);
                 }
             }
@@ -1141,27 +1172,32 @@ class Plan_coop extends Plan {
 
         partner = { x: Math.round(partner_status.x), y: Math.round(partner_status.y), id: partner_status.id }
         let plan = await generate_plan(partner_option[0], partner_option[2], partner_option[3], true);
-        //
 
-        if (this.stopped) throw ['stopped']; //???? send the 'stap waiting' message
+        if (this.stopped) throw ['stopped'];
+        //
         if (!plan || plan.length === 0) {
             if (logs) console.log(colors.green + "[plan]" + resetColor + "plan not found" + resetColor);
+            while (reply_for_plan.reply == undefined) {
+                if (Date.now() - last_reply.time > killing_time_for_next_step_of_plan) throw ['failed (no plan found) and no reply obtained'];
+                await sleep(500)
+            }
             throw ['failed (no plan found)'];
-            while (1) { }
 
         }
         else {
-            let last_reply
+            let last_reply_time
             let reply = null;
             for (let step of plan) {
-                last_reply = Date.now()
+                last_reply_time = Date.now()
+                //active loop for waiting the partner
                 while (reply_for_plan.reply == undefined) {
-                    console.log(colors.bgcyan, "[Generate_plan]", resetColor, reply_for_plan, last_reply)
+                    console.log(colors.bgcyan, "[Generate_plan]", resetColor, reply_for_plan, last_reply_time)
                     if (reply_for_plan.msg.msg == "stop") {
                         throw ["stopped by partner"]
                     }
-                    if (Date.now() - last_reply.time > 2000) return "failure"
-                    await sleep(500)
+                    if (Date.now() - last_reply_time.time > killing_time_for_next_step_of_plan) return "failure"
+                    // to avoid that node microcode doesn't let the events activate for the messages
+                    await sleep(refresh_time_for_plan)
                     if (this.stopped) throw ["stopped by partner"]
                 }
                 reply_for_plan.status = "not_received"
@@ -1172,10 +1208,10 @@ class Plan_coop extends Plan {
                 if (action == "MOVE_COOP") {
                     let [ag, ag2, from, to] = step.args;
                     if (ag == "PARTNER") {
+                        // use the reply object to communicate since the partner is
+                        //waiting for it
                         reply({ obj: step, msg: "go" })
                         reply_for_plan.reply = null
-                        //send(partner step); //???? send the instruction and wait
-                        //wait partner completition of the action
                     }
                     else {
                         reply({ msg: "stay_put" })
@@ -1239,6 +1275,8 @@ class Plan_coop extends Plan {
                     }
                     else {
                         await client.pickup();
+                        updateParcelsBelief([]);
+
                         if (logs) console.log(colors.green + "[plan]" + resetColor + `${ag} grab ${ob} in ${pos}`);
                     }
 
@@ -1272,13 +1310,19 @@ class Plan_receiver extends Plan {
 
     async execute(intention, priority) { //???? adattala come vuoi
         console.log(colors.bgcyan, "Starting receiving plan", resetColor)
-        let plan_terminated = false
-        while (!plan_terminated) {  //???? set to receive the terminal message
+        plan_following_status.last_message_received = Date.now()
+        plan_following_status.active = true
+
+        while (plan_following_status.active) {  //???? set to receive the terminal message
             let step //= wait_instruction //????
             let reply = await client.ask(global.communication.partner_id, { type: "following", msg: "i'm here" })
+            plan_following_status.last_message_received = Date.now()
+
             console.log(colors.bgcyan, "My step is:", resetColor, reply)
-            if (reply.msg == "stop")
+            if (reply.msg == "stop") {
+                plan_following_status.active = false
                 return "success"
+            }
             if (reply.msg == "stay_put") continue
             step = reply.obj
             let action = step.action;
@@ -1331,11 +1375,15 @@ class Plan_receiver extends Plan {
             } else if (action == "GRAB") {
                 let [ag, ob, pos] = step.args;
                 await client.pickup();
+                updateParcelsBelief([]);
+
                 if (logs) console.log(colors.green + "[plan]" + resetColor + `${ag} grab ${ob} in ${pos}`);
             } else if (action == "DROP") {
                 let [ag, ob, pos] = step.args;
                 await client.putdown();
                 delete_put_down();
+                updateParcelsBelief([]);
+
                 if (logs) console.log(colors.green + "[plan]" + resetColor + `${ag} drop ${ob} in ${pos}`);
             }
         }

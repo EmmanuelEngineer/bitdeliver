@@ -1,0 +1,216 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{algpseudocode}
+\usepackage{algorithm}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Matrix transposition tests\\
+{\footnotesize \textsuperscript{}For GPU Computing Homework 2}
+}
+
+\author{\IEEEauthorblockN{Emmanuele Virginio Coppola}
+\IEEEauthorblockA{\textit{Department of Information Engineering and Computer Science} \\
+\textit{University of Trento}\\
+Trento, Italy \\
+emmanuele.coppola@studenti.unitn.it 247540}
+
+\and
+\IEEEauthorblockN{Mattias Trettel}
+\IEEEauthorblockA{\textit{Department of Information Engineering and Computer Science} \\
+\textit{University of Trento}\\
+Trento, Italy \\
+mattias.trettel@studenti.unitn.it}
+}
+
+\maketitle
+
+\begin{abstract}
+This paper is a presentation on the development of an autonomous agent capable of navigating and interacting with a dynamic environment. The agent's behavior is demonstrated using the Deliveroo game, where it picks up and delivers parcels within a tile-based labyrinth.\end{abstract}
+
+
+\section{Introduction}
+The objective of this project is to develop an autonomous agent that navigates an environment using sensors and actuators to achieve specific goals. The agent's capabilities are illustrated through the Deliveroo game, where it collects and delivers parcels to designated locations.
+
+
+\section{Theory}
+\subsection{Deliveroo}
+The Deliveroo game is a online "videogame" in which each agent can move in a labyrinth made of tiles.
+The objective of the game is to pickup parcel around the labyrinth and bring them to "delivery" tiles to drop the parcels and get the scores of the dropped parcels.
+The parcels can spawn only on determined  "spawnable" tiles and each parcel can have a different score.
+The score of the parcel can drop in a given time frame. This information is give on login on the server.
+
+\subsection{The objective}
+Let's analyze the environment and the agent using the PEAS specifications.
+\begin{itemize}
+    \item Performance: It will be defined as the total score that the agent will accumulate in the round bringing packages in to the delivery points.
+    \item Environment: A digital labyrinth made up of tiles.
+    \item Actuators: Client messages sent to the server.
+    \item Sensors: Server events that transmits messages to the client.
+\end{itemize}
+
+
+In the specific the environment is:
+\begin{itemize}
+    \item Partially observable: the agent can see only parcels and agents that are in his vision range.
+    \item Multi-Agent (adversarial and cooperative): is a competitive game where multiple agent try to have the biggest score. Some of the agents can be of the same team and in that case the total Performance score will be the sum of the scores of the team members.
+    \item Deterministic: each action will bring one and only one result
+    \item Sequential: Since is a labyrinth, position and each interaction with each agent is important  for maximizing performance.
+    \item Dynamic: The movements are not turn based. The reasoning time is critical to reach an objective and the agent must be reactive in case of random appearing parcels and/or enemy agents.
+    \item Discrete: since the labyrinth is a tile based environment there is a finite amount of states the game can be.
+
+    \end{itemize}
+\subsection{The agent}
+Since this agent had to be reactive and be capable of planning actions ahead, we developed the agent following the BDI standard.
+The key concept of this standard are:
+\begin{itemize}
+    \item Have a belief set of the environment to keep updated
+    \item Generate options based on that belief set
+    \item Filter and choose an intention between the option generated
+    \item Generate a plan to fulfill the intention
+    \item Execute the plan
+    \item While executing the plan check if there are new perception and react accordingly
+\end{itemize}
+
+
+\section{Implementation}
+In this section we will talk about the actual implementation of the Agent.
+
+
+\subsection{Software}
+The agent is implemented using:
+\begin{itemize}
+    \item node 21.7.3, for the BDI logic
+    \item planning as a service for the plan reasoning
+\end{itemize}
+
+\section{Logic}
+The logic of the agent is divided between several components that will be discussed in the following sections
+\subsection{Main considerations}
+The agent is built mainly to work as a solitary agent that can optionally work in tandem with a teammate.
+This approach is done mainly for resilience, in case of abrupt communication errors.
+
+\subsection{Perceptions and Belief set}
+Our agents percepts the enviroment thanks to events sent by the server.
+We have 5 types of events/perceptions:
+\begin{itemize}
+    \item Map
+    \item Self
+    \item Parcels
+    \item Other Agents
+    \item Incoming Messages
+\end{itemize}
+
+
+\subsubsection{Map}
+The map perception is only done once when the agent is connecting to the server.
+When the shape of the map is determined the agent will determine what we called the favourite\_coordinates determined with the following alghorithm Alg.\ref{alg:fav_coordinates}
+
+
+\begin{algorithm}[htp]
+\begin{algorithmic}[1]
+
+\caption{Favourite coordinates generation }\label{alg:fav_coordinates}
+\State $M$ $\gets $Map defined as a matrix of tiles of different types
+\State $S$ $\gets$ $M$ with only tiles of type "spawnable"
+\State $F$ $\gets$ Matrix of favorable coordinates with $M$ dimensions and a starting value of $0$ in each element. 
+\For{tile $f$ of $F$}
+    \State $f=f+1$ for each element of $S$ that is near
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+the value of f will be than used for the option generation.
+
+
+\subsubsection{Self}
+The agent perceives itself at each movement and knows its:
+coordinates, score and id.
+
+\subsubsection{Parcels and Agents}
+The parcels and agents are perceived in the same way.
+Each perception can be triggered from the server.
+The perception is composed by a list of everything that the agent can see in that event activation.
+
+That list of object than will be saved in the belief set of the agent if the parcel id or the agent id was never seen before, or is kept updated and marked with the last update time of that object.
+
+If that object is not updated for a while, than it will be forgot.
+
+The Belief Set is kept updated by the main loop to avoid cases in which several seconds pass without a server event.
+
+\subsubsection{Incoming Message}
+The incoming message perception will be discussed in the communication section.
+\subsection{Communication}
+The communication between the 2 agents is optional, but is effective.
+It starts with an identification handshake.
+
+At login each agent (agent A and agent B) will shout (publish to each agent in the server) an identifying string.
+When the partner agent, for example B sees the identifying string first, it will ask to A (publish only to A and expecting a reply), another identifying string. A than will respond with a third string. Even if not used there is a mechanism to identify a Master and Slave relationship based on the "bigger" string id. Bigger as in comes first in lexical order.
+
+After the first handshake there will be several types of communication types.
+In fact when the partners exchange messages the communication is done as JSON strings.
+Each message JSON object, must contain the message type field and base on the type of message: a message string and/or an object string.
+
+The message types are:
+\begin{itemize}
+    \item beliefset\_agents
+    \item beliefset\_parcels
+    \item option\_communication
+    \item you\_block\_me
+    \item release\_me
+    \item following
+\end{itemize}
+
+\subsubsection{Belief-sets}
+The 2 beliefsets are updated with the same communication algorithm.
+Given a time interval, the partner A will send a message containing a list of the actual belief set to agent B. B will process the list seeing the last update time for each element. If the update time of the element contained in the list received from A is more recent than the one contained in the list of B, B will take the update, else it will ignore it.
+\subsubsection{Option Communication}
+If the agent A knows the id of the partner, he will ask approval to the partner B sending the option set ordered by priority.
+If the higher priority option of A is different from the current intention of B, B will respond with a "go\_ahead" message. If both option and intention corresponds than the priorities will be compared ( if we want to go to the take the same packet, the one with an higher priority is nearer.
+If B is the one with the higher priority will tell to A to generate other options and forget the packet he wanted to take.
+If A is the one with the higher priority, the vice versa will happen.
+
+\subsubsection{You Block Me message}
+A you block me message will be sent when for example, A can generate parcel based option when he doesn't consider B as an obstacle. The meaning of this message, is that maybe there can be a plan to solve the situation if both A and B are involved in it.
+If B has other options to follow, like pick up other packets or deliver them, it will ignore the request. If the request will not be ignored, will be generated the intention to generate a plan for both agents.
+
+\subsubsection{Release Me and Following}
+These two types of messages exists as a result of the strategy for synchronizing the two agents to follow the a common plan.
+\subsection{Option Generation}
+Each time there is a perception event or if there is no active intention, new option will be generated.
+Each option is generated with a priority score that will be used to determine which option will be used as an intention
+The option generation is composed of different phases:
+\begin{itemize}
+    \item Parcel based option generation
+    \item Parcel based option generation without considering the partner as an obstacle
+    \item Favorite position based option generation
+    \item Option Communication to partner
+\end{itemize}
+
+\subsubsection{Parcel Based option generation}
+When are generated parcel based options for the agent to ponder upon, there are 2 types of options that can be generated, "go\_pick\_up" and "go\_deliver".
+
+For the first option type is determined using an $A^{*}$ algorithm to determine the feasibility and possible real distance to move the agent itself in the position of the parcel and pick it up.
+The priority of a given option "go\_pick\_up" is given by the reward of a given parcels
+
+\subsection{Main Control Loop}
+\subsection{Plan Making}
+
+
+
+
+
+\begin{thebibliography}{00}
+\bibitem{b1} By \href{https://developer.nvidia.com/blog/author/mharris/}{Mark Harris},An Efficient Matrix Transpose in CUDA C/C++ \href{}{https://developer.nvidia.com/blog/efficient-matrix-transpose-cuda-cc/}
+\end{thebibliography}
+\vspace{12pt}
+\color{red}
+
+\end{document}
