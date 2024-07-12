@@ -517,7 +517,7 @@ function option_generation(x){
     }
 
     if(best_option){
-        let selectedPosition = map.favorite_coordinates.find(position => predicate.x === predicate[2] && position.y === predicate[3]);
+        let selectedPosition = map.favorite_coordinates.find(position => position.x === best_option[2] && position.y === best_option[3]);
         if (selectedPosition) {
             selectedPosition.time = Date.now();
         }
