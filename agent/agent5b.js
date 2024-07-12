@@ -5,9 +5,9 @@ import { onlineSolver, PddlProblem, Beliefset, PddlDomain, PddlAction } from "@u
 import fs from 'fs';
 const path = './tmp';
 
-const logs = true;
-const communication_logs = true;
-const kill = true;
+const logs = false;
+const communication_logs = false;
+const kill = false;
 const message_delay = 200
 const preferable_tile_dimension = 4
 const minimum_time_to_delete_belief = 7000
@@ -81,6 +81,8 @@ const partner_interval = setInterval(
         console.log(colors.bgmagenta, "searching partner", resetColor)
     }, 500);
 
+var send_belief_set;
+
 
 // Defining the Master/Slave relationship based on the biggest string, bigger id is the master
 function set_role(id) {
@@ -94,6 +96,12 @@ function set_role(id) {
         clearInterval(partner_interval)
     }
     global.communication.partner_id = id;
+    send_belief_set = setInterval(
+        function () {
+            say_to_teammate("beliefset_parcels", beliefSet_parcels)
+            beliefSet_agents.set(global.me.id, global.me)
+            say_to_teammate("beliefset_agents", beliefSet_agents)
+        }, 500);
 }
 
 
@@ -156,11 +164,11 @@ client.onMsg(async (id, name, msg, reply) => {
             console.log(colors.bgmagenta, "[PartnerMessage]", resetColor, " option communication ", partner_options)
             let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
             if (current_intention) {
-/*                 if (!(partner_options[0][0] == "generate_plan" || partner_options[0][0] == "follow_plan") ||
-                    !(current_intention.predicate[0] == "generate_plan" || current_intention.predicate[0] == "follow_plan")) {
-                    console.trace()
-                    await myAgent.remove_plan() //1!
-                } */
+                /*                 if (!(partner_options[0][0] == "generate_plan" || partner_options[0][0] == "follow_plan") ||
+                                    !(current_intention.predicate[0] == "generate_plan" || current_intention.predicate[0] == "follow_plan")) {
+                                    console.trace()
+                                    await myAgent.remove_plan() //1!
+                                } */
                 // if me and the partner have the same intention, which will have a better reward on it
                 // if i have the worst possible reward going somewhere(I'm more distant for example),
                 // i have to forget that position and tell the other to go_ahead
@@ -168,8 +176,12 @@ client.onMsg(async (id, name, msg, reply) => {
                     && current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3]) {
                     forget_position = { coordinates: [partner_options[0][2], partner_options[0][3]], time: Date.now() } //1!
                     //TODO: implementare discriminazione
-                    if (partner_options[0][1] > current_intention.predicate[1])
-                    reply({ type: "go_ahead" }) //in un IF
+
+                    if (partner_options[0][1] > current_intention.predicate[1]) {
+                        reply({ type: "generate_another" }) //in un IF
+                    } else if (partner_options[1]) {
+                        reply({ type: "go_ahead" })
+                    } else { reply({ type: "go_with_second" }) }
                     // if there is a packet to pick up, if i'm nearer(major reward) that i will go to pick it up and the other one must forget
                 } else if (partner_options[0][0] == "go_pick_up") {
                     if (current_intention.predicate[0] == partner_options[0][0] && current_intention.predicate[2] == partner_options[0][2] &&
@@ -183,6 +195,8 @@ client.onMsg(async (id, name, msg, reply) => {
                         } else { // I have the higher priority
                             if (partner_options[1]) {
                                 reply({ type: "go_with_second" })
+                                forget_parcel_id = partner_options[1][4]
+
                             }
                             else {
                                 reply({ type: "generate_another" })
@@ -221,8 +235,10 @@ client.onMsg(async (id, name, msg, reply) => {
             }
         } else if (msg.type == "release_me") {
             // the plan uses the await ask as a syncronization mechanism, so in case of any error the partner can ask me to reply to an ask
-            try { reply_for_plan.reply({ msg: "stop" }); ;console.trace();
-            if(kill) process.exit() } catch (error) { print_error(error) }
+            try {
+                reply_for_plan.reply({ msg: "stop" });; console.trace();
+                if (kill) process.exit()
+            } catch (error) { print_error(error) }
         } else if (msg.type == "following") {
             let intentions = [...myAgent.intention_queue.values()]
             // the plan uses the await ask as a syncronization mechanism,
@@ -654,9 +670,9 @@ async function option_generation(caller_method_id) {
         let options_2 = options_by_parcels(false)
         //if i can generate options only when not considering the partner as enemy, means that we block each other and can be that
         // we maybe need to call the planner
-
-        console.log(colors.bgcyan + "Maybe blocked for: " + resetColor,
-            options_2)
+        if (options_2.length != 0)
+            console.log(colors.bgcyan + "Maybe blocked for: " + resetColor,
+                options_2)
 
         if (options_2.length != 0 && options_2[0][0] != "go_pick_up" &&
             (![...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))) {
@@ -777,11 +793,9 @@ class IntentionRevision {
         while (true) {
             if (logs) console.log(colors.red + "[main_loop] " + resetColor + "==================================================================>", loop_counter++);
             // keep the partner updated 
-            if (global.communication.partner_id && message_timer()) {
-                say_to_teammate("beliefset_parcels", beliefSet_parcels)
-                beliefSet_agents.set(global.me.id, global.me)
-                say_to_teammate("beliefset_agents", beliefSet_agents)
-            }
+            /* if (global.communication.partner_id && message_timer()) {
+
+            } */
             // if stuck for some reason 
             if (plan_following_status.active && Date.now() - plan_following_status.last_message_received > killing_time_for_next_step_of_plan) {
                 console.trace()
@@ -819,11 +833,11 @@ class IntentionRevision {
                     // Catch eventual error and continue
                     .catch(error => {
                         if (logs) console.log(colors.red + "[main_loop]" + resetColor + 'Failed intention', ...intention.predicate, 'with error:', error)
-                        if (intention.predicate[0] == "generate_plan" || intention.predicate[0] =="follow_plan" )
+                        if (intention.predicate[0] == "generate_plan" || intention.predicate[0] == "follow_plan")
                             console.log(intention.predicate)
-                            console.trace();
-                            /* if(kill)
-                                process.exit() */
+                        console.trace();
+                        /* if(kill)
+                            process.exit() */
                     });
 
                 // Remove from the queue
@@ -875,9 +889,11 @@ class IntentionRevisionReplace extends IntentionRevision {
         this.intention_queue.push(intention);
         // if i'm changing plan release the other agent
         if (last && (last.predicate[0] == "generate_plan")) {
-            try { reply_for_plan.reply("stop"); ;console.trace();
-                if(kill)
-                    process.exit() } catch (error) { print_error(error) }
+            try {
+                reply_for_plan.reply("stop");; console.trace();
+                if (kill)
+                    process.exit()
+            } catch (error) { print_error(error) }
             // Force current intention stop 
             last.stop();
         }
@@ -888,9 +904,11 @@ class IntentionRevisionReplace extends IntentionRevision {
             if (logs) console.log(colors.pink, "[Intentions]", resetColor, " ---> delete plan execution");
             last.stop();
             if (last.predicate[0] == "generate_plan") {
-                try { reply_for_plan.reply({ msg: "stop" }); ;console.trace();
-                if(kill)
-                    process.exit() } catch (error) { print_error(error) }
+                try {
+                    reply_for_plan.reply({ msg: "stop" });; console.trace();
+                    if (kill)
+                        process.exit()
+                } catch (error) { print_error(error) }
             } else if (last.predicate[0] == "follow_plan") {
                 say_to_teammate("release_me", null)
             }
@@ -1070,7 +1088,8 @@ class Plan_single extends Plan { // Plan for the sigle agent
                         throw new Error(`Invalid position format: ${position}`);
                     }
                     let counter = 0;
-                    while (global.me.x != x || global.me.y != y) {
+                    await move(to)
+                    /* while (global.me.x != x || global.me.y != y) {
                         let last_action = null
                         if (this.stopped) {
                             if (logs) console.log(colors.green + "[plan] " + resetColor + "-> execute STOPPED");
@@ -1107,7 +1126,7 @@ class Plan_single extends Plan { // Plan for the sigle agent
                             global.me.y = y;
                         }
                         if (logs) console.log(colors.green + "[plan] " + resetColor + intention, "(me.pos=", x, y + ")", "(moving", last_action + ")");
-                    }
+                    } */
                 } else if (action == "GRAB") {
                     let [ag, ob, pos] = step.args;
                     await client.pickup();
@@ -1150,9 +1169,11 @@ class Plan_coop extends Plan {
                 if (Date.now() - last_reply.time > killing_time_for_next_step_of_plan) throw ['failed: no plan found and no reply obtained'];
                 await sleep(500)
             }
-            try { reply_for_plan.reply("stop"); ;console.trace();
-                if(kill)
-                    process.exit() } catch (error) { print_error(error) }
+            try {
+                reply_for_plan.reply("stop"); console.trace();
+                if (kill)
+                    process.exit()
+            } catch (error) { print_error(error) }
             throw ['failed: no coop-plan found'];
         }
         else {
@@ -1163,7 +1184,9 @@ class Plan_coop extends Plan {
                 //active loop for waiting the partner
                 while (reply_for_plan.reply == null) {
                     console.log(colors.bgcyan, "[Generate_plan]", resetColor, reply_for_plan, last_reply_time)
-                    if (reply_for_plan.msg == "stop") {
+                    console.trace()
+                    if (reply_for_plan.msg.msg == "stop" || reply_for_plan.status == "stopped") {
+                        reply_for_plan = { time: 0, status: "stopped" }
                         throw ["stopped by partner"]
                     }
                     if (Date.now() - last_reply_time.time > killing_time_for_next_step_of_plan)
@@ -1193,7 +1216,9 @@ class Plan_coop extends Plan {
                         catch (error) {
                             while (reply_for_plan.reply == null) {
                                 console.log(colors.bgcyan, "[Generate Plan]", resetColor, reply_for_plan, last_reply_time)
-                                if (reply_for_plan.msg.msg == "stop") {
+                                console.trace()
+                                if (reply_for_plan.msg == "stop" || reply_for_plan.status == "stopped" ) {
+                                    reply_for_plan = { time: 0, status: "stopped" }
                                     throw ["stopped by partner"]
                                 }
                                 if (Date.now() - last_reply_time.time > killing_time_for_next_step_of_plan)
@@ -1202,8 +1227,8 @@ class Plan_coop extends Plan {
                                 await sleep(refresh_time_for_plan)
                             }
                             reply_for_plan.reply({ msg: "stop" })
-                            ;console.trace();
-                            if(kill)
+                                ; console.trace();
+                            if (kill)
                                 process.exit()
                             throw [error]
                         }
@@ -1267,8 +1292,8 @@ class Plan_receiver extends Plan {
                 try { await move(to) }
                 catch (error) {
                     client.say(global.communication.partner_id, { type: "following", msg: "stop" })
-                    ;console.trace();
-                    if(kill)
+                        ; console.trace();
+                    if (kill)
                         process.exit()
                     throw [error]
                 }
