@@ -56,6 +56,8 @@ import fs from 'fs';
 
 
 
+
+
 //###################################################################################################
 //(2) variables to set before execution
 //###################################################################################################
@@ -103,7 +105,6 @@ const colors = {                        // planner POST (white) + debug logs
 function print_error(error){
     console.log("⚠️⚠️⚠️ " + colors.bgred + "[ERROR]" + "\n\t" + error + resetColor);
 }
-
 
 
 
@@ -189,7 +190,7 @@ class IntentionRevision {
             if (logs) console.log(colors.red + "[main_loop] " + resetColor + "==================================================================>", loop_counter++);
             // if stuck for some reason 
             if (plan_following_status.active && Date.now() - plan_following_status.last_message_received > killing_time_for_next_step_of_plan) {
-                if (comms_logs) console.log(colors.red + "[main_loop]" + colors.bgmagenta + "[comms] " + resetColor + "lost partner connection -> detaching");
+                if (comms_logs) console.log(colors.red + "[main_loop]" + colors.bgmagenta + "[comms]" + resetColor + " lost partner connection -> detaching");
                 await this.remove_plan();
             }
 
@@ -267,7 +268,8 @@ class IntentionRevisionReplace extends IntentionRevision {
         }
         // if i'm changing plan release the other agent
         if(last && (last.predicate[0] == "generate_plan")){
-            await remove_plan();  
+            print_error("condition = true in push function"); //to_remove
+            //await remove_plan();  
         }
     }
 
@@ -278,7 +280,8 @@ class IntentionRevisionReplace extends IntentionRevision {
             // Force current intention stop 
             last.stop();
             if (last.predicate[0] == "generate_plan") {
-                try { reply_for_plan.reply({ msg: "stop" }) } catch (error) { print_error(error) }
+                try { reply_for_plan.reply({ msg: "stop" })
+                } catch (error) { print_error(error); }
             } else if (last.predicate[0] == "follow_plan") {
                 say_to_teammate("release_me", null);
             }
@@ -357,6 +360,7 @@ class Intention {
                     // or errors are caught so to continue with next plan
                 } catch (error) {
                     if (logs) console.log(colors.magenta + '[achive intent] ' + resetColor + 'failed intention', ...this.predicate, 'with plan', planClass.name, 'with error:', error);
+                    if (!this.stopped) throw [error];
                 }
             }
         }
@@ -364,7 +368,7 @@ class Intention {
         if (this.stopped) throw ['[achive intent] stopped intention', ...this.predicate];
 
         // no plans have been found to satisfy the intention
-        throw ['[achive intent] no plan satisfied the intention ', ...this.predicate];
+        throw ['[achive intent] no plan satisfied the intention', ...this.predicate];
     }
 
 }
@@ -522,10 +526,7 @@ client.onAgentsSensing((agents) => {
     for (const id of idsToDelete) {
         beliefSet_agents.delete(id);
     }
-    let printBelief = Array.from(beliefSet_agents.values()).map(({ id, name, x, y}) => {
-        return `\t${name}:${x},${y}\n`;
-    }).join(' ');
-    if(logs && beliefSet_agents.size > 0) console.log(colors.yellow + "[onAgents] " +resetColor+ "memory agents:\n" + printBelief);
+    if(logs && beliefSet_agents.size > 0) console.log(colors.yellow + "[onAgents] " +resetColor+ "memory agents:" + printBeliefAgents());
     option_generation(1);
 })
 
@@ -572,10 +573,7 @@ client.onParcelsSensing(parcels => {
     for (const id of idsToDelete) {
         beliefSet_parcels.delete(id);
     }
-    let printBelief = Array.from(beliefSet_parcels.values()).map(({ id, x, y, reward, time, carriedBy }) => {
-        return `\t${id}: (${x},${y}) ${reward}\n`;
-    }).join(' ');
-    if(logs && beliefSet_parcels.size > 0) console.log(colors.yellow + "[onParcels] " +resetColor+ "parcel_memory:\n" + printBelief);
+    if(logs && beliefSet_parcels.size > 0) console.log(colors.yellow + "[onParcels] " +resetColor+ "parcel_memory:" + printBeliefParcels());
     option_generation(2);
 })
 
@@ -654,22 +652,23 @@ function init_myMapBeliefset() {
 let partner = 0;
 global.communication = { partner_id: null, master: false }
 
-var reply_for_plan = null
-var last_message_sent = 0;
-const refresh_time_for_plan = 200
+var reply_for_plan = null;                                                  //to keep track of partner for coop plan
+var last_message_sent = 0;                                                  //to keep track of communications
+const refresh_time_for_plan = 200;                                          //waiting time to check partner response
+const partner_update_time = 300;                                            //waiting time to send beliefsets to partner
+let send_belief_set                                                         //interval function to send beliefsets to partner (set below)
 
-var forget_parcel_id = null;
-let plan_following_status = { active: false, last_message_received: 0 }
+let forget_parcel_id = null;                                                //to ignore parcel being picked by partner
+let plan_following_status = { active: false, last_message_received: 0 }     //for following partner intructions
 
 
 //broadcast to let the other agent know that there is a connection available
-/*
 const partner_interval = setInterval(
     function () {
         client.shout('🍗🍗🍗');
-        if (comms_logs) console.log(colors.bgyellow + "[Send Message] " + resetColor + "searching partner")
+        if (comms_logs) console.log(colors.bgyellow + "[Send Message]" + resetColor + " searching partner")
     }, 500);
-*/
+
 
 
 //---------------------------------------------------------------------------------------------------
@@ -677,31 +676,31 @@ const partner_interval = setInterval(
 //---------------------------------------------------------------------------------------------------
 
 
-
-
 client.onMsg(async (id, name, msg, reply) => {
     //teammate searching the partner (is allowed to reset the role in case the teammate crashed)
     if (msg == "🍗🍗🍗") {
-        if (comms_logs) console.log(colors.bgyellow + "[onMsg] " + resetColor + "handshake request received");
+        if (comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " handshake request received");
         let reply = await client.ask(id, '🐔🐔🐔');
-        if (reply == "🐔🐔🐔") set_role(id)
+        if (reply == "🐔🐔🐔") set_role(id);
     // The teammate handshake 
     } else if (msg == "🐔🐔🐔" && !global.communication.partner_id){
             if (reply) {// per protocol definition the teammate must use the ask method, so the field reply must be not null
-                if (comms_logs) console.log(colors.bgyellow + "[onMsg] " + resetColor + "defining roles");
+                if (comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " defining roles");
                 try { reply("🐔🐔🐔") } catch { (error) => print_error(error) }
                 set_role(id);
             }
             else print_error("the handshake didn't respect the protocol");
     //communication between partners has protocol the exchange of messages  msg.type and msg.obj
     } else if (id == global.communication.partner_id) {//if is the partner
-        if (comms_logs) console.log(colors.bgmagenta + "[PartnerMessage] " + resetColor + msg.type)
+        if (comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor, msg.type);
         if (msg.type == "beliefset_agents"){ //make the partner aware of other agents in the his blind side
             let obj = jsonToMap(msg.obj) 
             if (obj.size > 0) {
-                if (comms_logs) console.log(colors.bgmagenta + "[PartnerMessage] " + resetColor + " before:\n",
-                    printBeliefAgents(beliefSet_agents), "obj:\n", printBeliefAgents(obj));
+                if (debug_logs) console.log("[onMsg] beliefset_agents before:", printBeliefAgents());
                 for (const [key, a] of obj){
+                    if(a.id == global.me.id){
+                        continue;
+                    }
                     if (beliefSet_agents.has(a.id)) {
                         //check for who has the last update on an agent
                         if (a.time > beliefSet_agents.get(a.id).time){
@@ -709,12 +708,11 @@ client.onMsg(async (id, name, msg, reply) => {
                         }
                     } else beliefSet_agents.set(a.id, a);
                 }
-                if (comms_logs)
-                    console.log(colors.bgmagenta + "[PartnerMessage] " + resetColor + " after:\n"+ printBeliefAgents(beliefSet_agents));
+                if (debug_logs) console.log("[onMsg] beliefset_agents after:", printBeliefAgents());
             }
         } else if (msg.type == "beliefset_parcels") {
             let obj = jsonToMap(msg.obj)
-            if (comms_logs) console.log(colors.bgmagenta + "[PartnerMessage] " + resetColor + " before:\n" + msg.obj, "obj:\n", printBeliefParcels(obj));
+            if (debug_logs) console.log("[onMsg] beliefset_parcel before:", printBeliefParcels());
             if (obj.size > 0) {
                 for (const [key, a] of obj) {
                     //check for who has the last update on a parcel
@@ -724,103 +722,107 @@ client.onMsg(async (id, name, msg, reply) => {
                         }
                     } else beliefSet_parcels.set(a.id, a)
                 }
-                console.log(colors.bgmagenta + "[PartnerMessage] " + resetColor + "after:" + printBeliefParcels(beliefSet_parcels));
+                if (debug_logs) console.log("[onMsg] beliefset_parcel after:", printBeliefParcels());
             }
         } else if (msg.type == "option_communication"){
             //The partner communication on the most probable option that can became an intention
             if (!reply) {
-                print_error("message with no reply")
+                print_error("message with no reply object");
                 return;
             }
             let partner_options = msg.obj
             forget_parcel_id = null;
-            console.log(colors.bgmagenta + "[PartnerMessage] " + resetColor + "option communication" + partner_options)
-            let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
+            if (logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " option communication:\n" + partner_options)
+            let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1);
             if (current_intention) {
-                if (!(partner_options[0][0] == "generate_plan" || partner_options[0][0] == "follow_plan") ||
-                    !(current_intention.predicate[0] == "generate_plan" || current_intention.predicate[0] == "follow_plan")){
-                    await myAgent.remove_plan();
-                }
                 // if me and the partner have the same intention, which will have a better reward on it
                 // if i have the worst possible reward going somewhere(I'm more distant for example),
                 // i have to forget that position and tell the other to go_ahead
                 if (partner_options[0][0] == "go_to" && current_intention.predicate[0] == partner_options[0][0]
                     && current_intention.predicate[2] == partner_options[0][2] && current_intention.predicate[3] == partner_options[0][3]) {
-                    let selectedPosition = map.favorite_coordinates.find(position => position.x === options[0][2] && position.y === options[0][3]);
-                    if (selectedPosition) {
-                        selectedPosition.time = Date.now();
-                    }
-
                     if (partner_options[0][1] > current_intention.predicate[1]) {
+                        if(debug_logs) console.log("[Reply] go_ahead");
                         reply({ type: "go_ahead" });
                     } else if (partner_options[1]) {
+                        if(debug_logs) console.log("[Reply] go_with_second");
                         reply({ type: "go_with_second" });
                     } else {
+                        if(debug_logs) console.log("[Reply] generate_another");
                         reply({ type: "generate_another" });
                     }
                     // if there is a packet to pick up, if i'm nearer(major reward) that i will go to pick it up and the other one must forget
                 } else if (partner_options[0][0] == "go_pick_up") {
                     if (current_intention.predicate[0] == partner_options[0][0] && current_intention.predicate[2] == partner_options[0][2] &&
                         current_intention.predicate[3] == partner_options[0][3]) {
-                        if (partner_options[0][1] > current_intention.predicate[1]
-                            || (partner_options[0][1] == current_intention.predicate[1] && (!global.communication.master))) {
+                        if (partner_options[0][1] > current_intention.predicate[1]){
+                            if(debug_logs) console.log("[Reply] go_ahead");
                             reply({ type: "go_ahead" })
-                            current_intention.stop() //1!
-                            forget_parcel_id = partner_options[0][4]
-                            option_generation(4)
-                        } else { // I have the higher priority
+                            current_intention.stop();
+                            forget_parcel_id = partner_options[0][4];
+                            option_generation(4);
+                        } else { // I have the higher priority or same priority but I'm already following a plan
                             if (partner_options[1]) {
-                                reply({ type: "go_with_second" })
+                                reply({ type: "go_with_second" });
+                                if(debug_logs) console.log("[Reply] go_with_second");
                                 forget_parcel_id = partner_options[1][4]
-
                             }
                             else {
-                                reply({ type: "generate_another" })
+                                if(debug_logs) console.log("[Reply] generate_another");
+                                reply({ type: "generate_another" });
                             }
                         }
-                    } else {
-                        reply({ type: "go_ahead" })
+                    } else { // defferent parcels
+                        if(debug_logs) console.log("[Reply] go_ahead");
+                        reply({ type: "go_ahead" });
                     }
-                } else {
-                    reply({ type: "go_ahead" })
+                } else { // not mutual competitive intentions
+                    if(debug_logs) console.log("[Reply] go_ahead");
+                    reply({ type: "go_ahead" });
                 }
-            } else reply({ type: "go_ahead" })
+            } else { //currently I don't have an intention
+                if(debug_logs) console.log("[Reply] go_ahead");
+                reply({ type: "go_ahead" });
+            }
         } else if (msg.type == "you_block_me") {
             // sent by partner to tell me that i'm blocking his action
-            console.log(colors.bgmagenta + "[PartnerMessage] " + resetColor + "I'm Blocking: partner asks for help")
+            if(logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " I'm Blocking: partner asks for coop plan");
             let partner_options = msg.obj.options
             let partner_status = msg.obj.status
             // if i can do something else, than i will go forward for my way and ignore the partner
-            let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1)
+            let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1);
 
             if (current_intention != undefined && (current_intention.predicate[0] == "go_deliver" || current_intention.predicate[0] == "go_pick_up") &&
             current_intention.predicate[1] - partner_options[0][1] > 2){
-                console.log(colors.bgmagenta + "[Reply] " + resetColor + "I_ignore_you")
+                if(debug_logs) console.log("[Reply] I_ignore_you");
                 reply({ type: "i_ignore_you" })
             } else {
-                // if i cannot do anything let's start a plan that works for both
-                let intentions = [...myAgent.intention_queue.values()] //1! just 1
-                // if there isn't another plan related intention, lets' promote the option in an intention
-                if (!intentions.some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))
-                    await myAgent.push(["generate_plan", 9999, partner_options[0], partner_status])
-                // preparing for the plan execution
-                reply_for_plan = { time: 0, status: "not_received" }
-                reply({ type: "plan" })
-                console.log(colors.bgmagenta + "[Reply] " + resetColor + "Responding with: preparing plan")
+                // if there isn't another plan related intention, lets' start a coop plan
+                if (![...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan"))){
+                    // preparing for the plan execution
+                    if(debug_logs) console.log("[Reply] Preparing coop plan");
+                    reply_for_plan = { time: 0, status: "not_received" };
+                    await myAgent.push(["generate_plan", 9999, partner_options[0], partner_status]);
+                    reply({ type: "plan" });
+                }
             }
         } else if (msg.type == "release_me"){
+            if (comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " release_me");
             // the plan uses the await ask as a syncronization mechanism, so in case of any error the partner can ask me to reply to an ask
             try { reply_for_plan.reply({ msg: "stop" }) } catch (error) { print_error(error) }
         } else if (msg.type == "following") {
-            let intentions = [...myAgent.intention_queue.values()]
+            if (comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " partner is waiting orders");
             // the plan uses the await ask as a syncronization mechanism,
-            if (intentions.some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))
+            if ([...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "generate_plan"))){
                 reply_for_plan = { time: Date.now(), reply: reply, msg: msg, status: "received" }
-            else reply({ msg: "stop" })
+            }
+            else{
+                if (comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " partner took too long to follow orders");
+                reply({ msg: "stop" });
+            }
         } else { print_error("TEAMMATE SENT A NON SUPPORTED MESSAGE TYPE: "+msg)}
     } else{//non partner messages
         if (comms_logs)
-            console.log(colors.bgmagenta + "[Message] " + resetColor + "received:", id, name, msg, reply)
+            console.log(colors.bgmagenta + "[Message]" + resetColor + " received:", id, name, msg, reply)
     }
 });
 
@@ -834,17 +836,19 @@ client.onMsg(async (id, name, msg, reply) => {
 function set_role(id) {
     if (global.me.id > id) {
         global.communication.master = true
-        if (comms_logs) console.log(colors.bgmagenta + "[comms info]" + resetColor + "I'm the Master");
+        if (comms_logs) console.log(colors.bgmagenta + "[comms info]" + resetColor + " I'm the Master");
         clearInterval(partner_interval)
     } else {
         global.communication.master = false
-        if (comms_logs) console.log(colors.bgmagenta + "[comms info]" + resetColor + "I'm the Slave");
+        if (comms_logs) console.log(colors.bgmagenta + "[comms info]" + resetColor + " I'm the Slave");
         clearInterval(partner_interval)
     }
     global.communication.partner_id = id;
     send_belief_set = setInterval(
         function () {
-            say_to_teammate("beliefset_parcels", beliefSet_parcels);
+            if(beliefSet_parcels.size > 0){
+                say_to_teammate("beliefset_parcels", beliefSet_parcels);
+            }
             beliefSet_agents.set(global.me.id, global.me);
             say_to_teammate("beliefset_agents", beliefSet_agents);
         }, partner_update_time);
@@ -866,7 +870,7 @@ function say_to_teammate(msg_type, obj) {
     else{
         message = obj
     }
-    if (comms_logs) console.log(colors.bgblue + "[sending message] " + resetColor + "saying: "+ msg_type, message);
+    if (comms_logs) console.log(colors.bgblue + "[sending message]" + resetColor + " saying: "+ msg_type, message);
     client.say(global.communication.partner_id, { type: msg_type, obj: message })
 }
 
@@ -879,9 +883,9 @@ async function ask_teammate(msg_type, obj) {
     else{
         message = obj;
     }
-    if (comms_logs) console.log(colors.bgblue + "[sending message] " + resetColor + "asking: " + msg_type, message);
+    if (comms_logs) console.log(colors.bgblue + "[sending message]" + resetColor + " asking: " + msg_type, message);
     let reply = await client.ask(global.communication.partner_id, { type: msg_type, obj: message });
-    if (comms_logs) console.log(colors.bgblue + "[response message] " + resetColor + "reply: "+ reply);
+    if (comms_logs) console.log(colors.bgblue + "[response message]" + resetColor + " reply: "+ reply);
     return reply;
 }
 
@@ -897,14 +901,20 @@ function jsonToMap(jsonString){
 }
 
 //print functions
-function printBeliefAgents(beliefset){
-    Array.from(beliefset.values()).map(({ id, name, x, y}) => {
-    return `\t${name}:${x},${y}\n`}).join(' ');
+function printBeliefAgents() {
+    let str = "";
+    for (let [key,agent] of beliefSet_agents) {
+        str+= "\n\t" + agent.name+": ("+ agent.x+","+ agent.y +")";
+    }
+    return str;
 }
           
-function printBeliefParcels(beliefset){
-    Array.from(beliefset.values()).map(({ id, x, y, reward, time, viewable, carriedBy }) => {
-    return `\t${id}:${x},${y},${reward},${time},${viewable},${carriedBy}\n`}).join(' ');
+function printBeliefParcels(){
+    let str = "";
+    for (let [key,parcel] of beliefSet_parcels) {
+        str+= "\n\t" + parcel.id+": ("+ parcel.x+","+ parcel.y +") "+ parcel.reward;
+    }
+    return str;
 }
 
 
@@ -919,6 +929,7 @@ function printBeliefParcels(beliefset){
 const tiles_timeout = 4000;     //to not return to the same position to early
 const norm_cost = 4;            //normalization costant -> tradeoff between decay_time & movement_time
 const risk = 3;                 //(1...10) risk to not going directly to the biggest parcel
+const take_away_risk = 10       //rick to go to pick a parcel near an adversary
 
 //---------------------------------------------------------------------------------------------------
 //(7b) option generator
@@ -952,15 +963,13 @@ async function option_generation(caller_method_id) {
             if (options_2.length > 0 && options_2[0][0] == "go_deliver" &&
                 (![...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))) {
 
-                //multiple requests?????
                 if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "found coop option -> asking partner");
                 let reply = await ask_teammate("you_block_me", { status: global.me, options: options_2 });
-                let current_intention = myAgent.intention_queue[0];
-                if (reply.type == "plan" &&
-                    (current_intention === undefined ||// there can be multiple calls in parallel
-                        !(current_intention.predicate[0] == "follow_plan" || current_intention.predicate[0] == "generate_plan"))) {
+                let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1);
+                if (reply.type == "plan" && (current_intention === undefined // there can be multiple calls in parallel
+                        || !(current_intention.predicate[0] == "follow_plan" || current_intention.predicate[0] == "generate_plan"))) {
+                    if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "partner decided for coop plan");
                     await myAgent.push(["follow_plan", 9999, reply.obj]);
-                    console.log(colors.blue + "[opt_gen] " + resetColor + "partner decided for coop plan");
                     return;
                 }
                 else{
@@ -1009,7 +1018,7 @@ async function option_generation(caller_method_id) {
         // communicate the 
         if (global.communication.partner_id && (options[0][0] == "go_pick_up" || options[0][0] == "go_to")) {
             if (message_timer()){
-                let reply = await ask_teammate("option_communication", options);
+                let reply = await ask_teammate("option_communication", options.slice(0, 2));
                 if (reply.type == "go_with_second"){
                     //use second option
                     await myAgent.push(options[1]);
@@ -1050,6 +1059,13 @@ async function option_generation(caller_method_id) {
 
 // generate options for parcels
 function options_by_parcels(consider_partner = true) {
+    //Index:
+    //option 1  go_deliver
+    //option 2  go_pick_up parcel -> deliver
+    //option 3  pick_up paarcel2 -> pick_up parcel -> deliver
+    //option 4  deliver -> pick_up parcel
+    //option 5  pick_up paarcel2 -> deliver -> pick_up parcel
+    compute_parcel_risk();
     const options = [];
     let parcels_on_me_counter = 0;
     let parcels_on_me_reward = 0;
@@ -1059,7 +1075,7 @@ function options_by_parcels(consider_partner = true) {
             parcels_on_me_counter += 1;
         }
     }
-    if (parcels_on_me_counter) { //compute option "go_deliver"
+    if (parcels_on_me_counter) { //compute go_deliver (option 1)
         let delivery_point = get_nearest_delivery_point_path(global.me, consider_partner);
         if (!delivery_point) {
             if (logs) console.log(colors.blue + "[opt_gen] " + resetColor + "unable to find path to delivery from here ", global.me);
@@ -1076,9 +1092,9 @@ function options_by_parcels(consider_partner = true) {
             if (debug_logs) console.log("pushing go_deliver", delivery_point.x, delivery_point.y, "with priority:", priority ,"->", parcels_on_me_reward, "-", parcels_on_me_counter, delivery_point.distance, decay_time/1000, "/",config.MOVEMENT_DURATION/norm_cost)
         }
     }
-
+    //compute option for parcels
     for (const parcel of beliefSet_parcels.values()) {
-        if (parcel.carriedBy == global.me.id || parcel.id == forget_parcel_id || parcel.carriedBy == global.communication.partner_id) {          //We carry the parcel
+        if (parcel.carriedBy == global.me.id || parcel.id == forget_parcel_id || (parcel.carriedBy == global.communication.partner_id && global.communication.partner_id != null)) {          //We carry the parcel
             continue;
         }
         else if (!parcel.carriedBy) {             //free parcel
@@ -1087,10 +1103,11 @@ function options_by_parcels(consider_partner = true) {
                 if (logs) console.log(colors.blue + "[opt_gen] " + resetColor + "unable to find path to", parcel);
                 continue;
             }
+
             let delivery_point_from_parcel = get_nearest_delivery_point_path(parcel, consider_partner); //and is deliverable + there is a decay time
             if (!delivery_point_from_parcel && decay_time){
                 if (logs) console.log(colors.blue + "[opt_gen] " + resetColor + "unable to find nearest delivery point to", parcel);
-                options.push(['go_pick_up', parcel.reward - 30, parcel.x, parcel.y]); //To this if there is nothing else to do
+                options.push(['go_pick_up', parcel.reward -parcel.stealing_risk -30, parcel.x, parcel.y]); //To this if there is nothing else to do
                 continue;
             }
             let base_priority;
@@ -1100,11 +1117,12 @@ function options_by_parcels(consider_partner = true) {
             else {
                 base_priority = parcel.reward + parcels_on_me_reward;
             }
-            options.push(['go_pick_up', base_priority, parcel.x, parcel.y]);
-            if (debug_logs) console.log("pushing go_pick_up", parcel.x, parcel.y, "with priority:", priority ,"->", parcel.reward , parcels_on_me_reward, "-", parcels_on_me_counter+1, distance_percel,"+",delivery_point_from_parcel.distance,
+            //go_pick_up parcel -> deliver (option 2)
+            options.push(['go_pick_up', base_priority -parcel.stealing_risk, parcel.x, parcel.y]);
+            if (debug_logs) console.log("pushing go_pick_up", parcel.x, parcel.y, "with priority:", priority ,"->", parcel.reward , parcels_on_me_reward, "-", parcels_on_me_counter+1, distance_parcel,"+",delivery_point_from_parcel.distance,
                 decay_time/1000, "/",config.MOVEMENT_DURATION/norm_cost);
 
-            //compute 2 package options
+            //compute second parcel option: (pick up parcel2 first)
             for (const parcel2 of beliefSet_parcels.values()) {
                 if (parcel2.carriedBy || parcel2 === parcel || parcel2.id == forget_parcel_id) {
                     continue;
@@ -1119,16 +1137,18 @@ function options_by_parcels(consider_partner = true) {
                 if (deviation_priority < 0) {
                     continue; // check if it's worth
                 }
-                options.push(['go_pick_up', base_priority + deviation_priority, parcel2.x, parcel2.y]);
+                //pick_up paarcel2 -> pick_up parcel -> deliver (option 3)
+                options.push(['go_pick_up', base_priority + deviation_priority - parcel2.stealing_risk, parcel2.x, parcel2.y]);
             }
 
-
-            if (parcels_on_me_counter) {    //second option (go deliver first)
+            //compute go deliver first option
+            if (parcels_on_me_counter) {
                 let delivery_point = get_nearest_delivery_point_path(global.me, consider_partner);
                 if (!delivery_point){
                     continue;
                 }
                 base_priority = parcel.reward + parcels_on_me_reward - ((parcels_on_me_counter + 1) * delivery_point.distance + delivery_point_from_parcel.distance * 2) * (decay_time / 1000) / (config.MOVEMENT_DURATION / norm_cost);
+                //deliver -> pick_up parcel (option 4)
                 options.push(['go_deliver', base_priority, delivery_point.x, delivery_point.y]);
                 if (debug_logs) console.log("pushing go_deliver", delivery_point_from_parcel.x, delivery_point_from_parcel.y, "with priority:", priority ,"->", parcel.reward , parcels_on_me_reward,
                    "-", parcels_on_me_counter+1, delivery_point.distance,"+",delivery_point_from_parcel.distance, decay_time/1000, "/",config.MOVEMENT_DURATION/norm_cost)
@@ -1147,7 +1167,8 @@ function options_by_parcels(consider_partner = true) {
                     if (deviation_priority < 0) {
                         continue; // check if it's worth
                     }
-                    options.push(['go_pick_up', base_priority + deviation_priority, parcel2.x, parcel2.y]);
+                    //pick_up paarcel2 -> deliver -> pick_up parcel (option 5)
+                    options.push(['go_pick_up', base_priority + deviation_priority - parcel2.stealing_risk, parcel2.x, parcel2.y]);
                 }
             }
         }
@@ -1158,6 +1179,24 @@ function options_by_parcels(consider_partner = true) {
     return options;
 }
 
+function compute_parcel_risk(){
+    for (const parcel of beliefSet_parcels.values()) {
+        let distance_parcel = distance_path(global.me, parcel, false);
+        let min_agent_parcel_distance = config.AGENTS_OBSERVATION_DISTANCE+1;
+        for (const agent of beliefSet_agents.values()) {
+            let agent_parcel_distance = distance_path(agent,parcel,false);
+            if(agent_parcel_distance && agent_parcel_distance < min_agent_parcel_distance){
+                min_agent_parcel_distance = agent_parcel_distance;
+            }
+        }
+        let stealing_risk = 0;
+        if(distance_parcel > min_agent_parcel_distance){
+            stealing_risk = (distance_parcel-min_agent_parcel_distance)*take_away_risk;
+        }
+        parcel.stealing_risk = stealing_risk;
+    }
+}
+
 // use an a* pathfinder to determine the effective distance between points
 function distance_path(start_pos, end_pos, consider_partner_obstacle) {
     if (!grid) {
@@ -1165,7 +1204,7 @@ function distance_path(start_pos, end_pos, consider_partner_obstacle) {
     }
     let grid_copy = grid.map(row => [...row]);
     for (let agent of beliefSet_agents.values()) {
-        if (agent != undefined) {
+        if (agent != undefined && agent.x != start_pos.x && agent.y != start_pos.y) {
             try {
                 if (global.me.id != agent.id && (consider_partner_obstacle || agent.id != global.communication.partner_id))
                     //mark obstacles on the grid
@@ -1333,107 +1372,106 @@ class Plan_coop extends Plan {
         let plan = await generate_plan(partner_option[0], partner_option[2], partner_option[3], true);
 
         if (this.stopped) throw ['stopped'];
-        //
-        if (!plan || plan.length === 0) {
+
+        if (!plan || plan.length === 0){
             if (logs) console.log(colors.green + "[plan] " + resetColor + "plan not found");
             while (reply_for_plan.reply == null) { //wait the partner to follow the orders
-                if (Date.now() - last_reply.time > killing_time_for_next_step_of_plan){
+                if (Date.now() - reply_for_plan.time > killing_time_for_next_step_of_plan){
                     throw ['failed: no coop plan found and no reply obtained'];
                 }
                 await sleep(500)
             }
             try {
-                if(comms_logs) console.log(colors.bggreen + "[plan comms] " + resetColor + "sending stop plan");
+                if(comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " sending stop plan");
                 reply_for_plan.reply("stop");
                 if(debug_logs) console.trace();
             } catch (error) { print_error(error) }
             throw ['failed: no coop plan found'];
         }
         else {
-            let last_reply_time;
-            let reply = null;;
+            let reply = null;
             for (let step of plan) {
-                last_reply_time = Date.now();
+                reply_for_plan.time = Date.now();
                 //active loop for waiting the partner
                 while (reply_for_plan.reply == null) {
-                    console.log(colors.bggreen + "[plan comms] " + resetColor + "waiting partner time: ", Date.now() - last_reply_time, reply_for_plan);
+                    if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " waiting partner time: ", Date.now() - reply_for_plan.time, reply_for_plan);
                     if(debug_logs) console.trace();
-                    if (reply_for_plan.msg.msg == "stop" || reply_for_plan.status == "stopped") {
+                    if (reply_for_plan.msg.msg == "stop"){
                         reply_for_plan = { time: 0, status: "stopped" }
                         throw ["stopped by partner"];
                     }
-                    if (Date.now() - last_reply_time.time > killing_time_for_next_step_of_plan){
+                    if (Date.now() - reply_for_plan.time > killing_time_for_next_step_of_plan){
                         throw ['failed: no reply obtained'];
                     }
                     // to avoid that node microcode doesn't let the events activate for the messages
-                    await sleep(refresh_time_for_plan)
+                    await sleep(refresh_time_for_plan);
                     if (this.stopped) throw ["stopped by partner"]
                 }
-                if (logs) console.log(colors.bgcyan + "[Generate Plan]" + resetColor + " received reply")
-
+                if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " received reply");
                 reply = reply_for_plan.reply
                 let action = step.action;
                 if (action == "MOVE_COOP") {
                     let [ag, ag2, from, to] = step.args;
                     if (ag == "PARTNER") {
-                        // use the reply object to communicate since the partner is
-                        //waiting for it
+                        // use the reply object to communicate since the partner is waiting for it
+                        reply_for_plan.reply = null;
                         reply({ obj: step, msg: "go" })
-                        reply_for_plan.reply = null
                     }
                     else {
-                        reply({ msg: "stay_put" })
-                        reply_for_plan.reply = null
+                        reply_for_plan.reply = null;
+                        reply({ msg: "stay_put" });
 
-                        if (logs) console.log(colors.bgcyan + "[plan]" + resetColor + " starting moving to", to);
-                        try { await move(to) }
+                        if (logs) console.log(colors.green + "[plan]" + resetColor + " starting moving to", to);
+                        try {
+                            await move(to);
+                        }
                         catch (error) {
                             while (reply_for_plan.reply == null) {
-                                console.log(colors.bgcyan, "[Generate Plan]", resetColor, reply_for_plan, last_reply_time)
-                                console.trace()
-                                if (reply_for_plan.msg == "stop" || reply_for_plan.status == "stopped" ) {
+                                if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " waiting partner to kill plan, time= " + Date.now() - reply_for_plan.time);
+                                if (debug_logs) console.trace();
+                                if (reply_for_plan.msg == "stop"){
                                     reply_for_plan = { time: 0, status: "stopped" }
-                                    throw ["stopped by partner"]
+                                    throw ["stopped by partner"];
                                 }
-                                if (Date.now() - last_reply_time.time > killing_time_for_next_step_of_plan)
+                                if (Date.now() - reply_for_plan.time > killing_time_for_next_step_of_plan){
                                     throw ['failed: no reply obtained'];
+                                }
                                 // to avoid that node microcode doesn't let the events activate for the messages
                                 await sleep(refresh_time_for_plan)
                             }
-                            reply_for_plan.reply({ msg: "stop" })
-                                ; console.trace();
-                            if (kill)
-                                process.exit()
-                            throw [error]
+                            reply_for_plan.reply({ msg: "stop" });
+                            if (debug_logs)console.trace();
+                            if (kill){
+                                process.exit();
+                            }
+                            throw [error];
                         }
                     }
                 } else if (action == "GRAB") {
                     let [ag, ob, pos] = step.args;
                     if (ag == "PARTNER") {
-                        reply({ obj: step, msg: "go" })
-                        reply_for_plan.reply = null
+                        reply_for_plan.reply = null;
+                        reply({ obj: step, msg: "go" });
                     }
                     else {
                         await client.pickup();
 
-                        if (logs) console.log(colors.bgcyan + "[Generate Plan]" + resetColor + `${ag} grab ${ob} in ${pos}`);
+                        if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} grab ${ob} in ${pos}`);
                     }
-
-
                 } else if (action == "DROP") {
                     let [ag, ob, pos] = step.args;
                     if (ag == "PARTNER") {
-                        reply({ obj: step, msg: "go" })
-                        reply_for_plan.reply = null
+                        reply_for_plan.reply = null;
+                        reply({ obj: step, msg: "go" });
                     }
                     else {
                         await client.putdown();
                         delete_put_down();
-                        if (logs) console.log(colors.bgcyan + "[Generate Plan]" + resetColor + `${ag} drop ${ob} in ${pos}`);
+                        if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} drop ${ob} in ${pos}`);
                     }
                 }
             }
-            reply_for_plan.reply({ msg: "stop" })
+            reply_for_plan.reply({ msg: "stop" });
             return "success";
         }
     }
@@ -1450,45 +1488,45 @@ class Plan_receiver extends Plan {
     }
 
     async execute(intention, priority) {
-        console.log(colors.bgcyan, "Starting receiving plan", resetColor)
+        if (logs) console.log(colors.green + "[plan]" + resetColor + " starting receiver coop plan");
         plan_following_status.last_message_received = Date.now()
         plan_following_status.active = true
 
         while (plan_following_status.active) {
-            let reply = await client.ask(global.communication.partner_id, { type: "following", msg: "i'm here" })
+            let reply = await client.ask(global.communication.partner_id, { type: "following", msg: "i'm here" });
             plan_following_status.last_message_received = Date.now()
 
-            console.log(colors.bgcyan, "[Follow Plan] ", resetColor, "My step is:", reply)
+            if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " My step is:", reply);
             if (reply.msg == "stop") {
-                plan_following_status.active = false
-                return "success"
+                plan_following_status.active = false;
             }
-            if (reply.msg == "stay_put") continue
+            if (reply.msg == "stay_put") continue;
             let step = reply.obj
             let action = step.action;
             if (action == "MOVE_COOP") {
                 let [ag, ag2, from, to] = step.args;
-                try { await move(to) }
+                try { 
+                    await move(to);
+                }
                 catch (error) {
-                    client.say(global.communication.partner_id, { type: "following", msg: "stop" })
-                        ; console.trace();
-                    if (kill)
-                        process.exit()
-                    throw [error]
+                    client.say(global.communication.partner_id, { type: "following", msg: "stop" });
+                    if(debug_logs){
+                        console.trace();
+                    }
+                    if (kill){
+                        process.exit();
+                    }
+                    throw [error];
                 }
             } else if (action == "GRAB") {
                 let [ag, ob, pos] = step.args;
                 await client.pickup();
-                //updateParcelsBelief([]);
-
-                if (logs) console.log(colors.bgcyan + "[Follow Plan]" + resetColor + `${ag} grab ${ob} in ${pos}`);
+                if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} grab ${ob} in ${pos}`);
             } else if (action == "DROP") {
                 let [ag, ob, pos] = step.args;
                 await client.putdown();
                 delete_put_down();
-                //updateParcelsBelief([]);
-
-                if (logs) console.log(colors.bgcyan + "[Follow Plan]" + resetColor + `${ag} drop ${ob} in ${pos}`);
+                if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} drop ${ob} in ${pos}`);
             }
         }
         return "success";
@@ -1526,7 +1564,6 @@ planLibrary.push(Plan_single);
 planLibrary.push(Plan_coop);
 planLibrary.push(Plan_receiver);
 planLibrary.push(RandomMove);
-
 
 
 //---------------------------------------------------------------------------------------------------
