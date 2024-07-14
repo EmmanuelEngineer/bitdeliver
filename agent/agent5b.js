@@ -801,6 +801,7 @@ client.onMsg(async (id, name, msg, reply) => {
                     // preparing for the plan execution
                     if(debug_logs) console.log("[onMsg][debug] replying preparing coop plan");
                     reply_for_plan = { time: 0, status: "not_received" };
+                    if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "pushing coop plan option");
                     await myAgent.push(["generate_plan", 9999, partner_options[0], partner_status]);
                     reply({ type: "plan" });
                 }
@@ -963,14 +964,14 @@ async function option_generation(caller_method_id) {
             //tryng to generate options without considering the partner as an obstacle
             let options_2 = options_by_parcels(false); //generate go_pick_up and go_deliver options
 
-            if (options_2.length > 0 && options_2[0][0] == "go_deliver" &&
-                (![...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))) {
+            if (options_2.length > 0 && options_2[0][0] == "go_deliver" && (![...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "follow_plan" || intention.predicate[0] == "generate_plan")))) {
                 if(comms_logs) console.log(colors.bgblue + "[opt_gen]" + resetColor + " found coop option -> asking partner");
                 let reply = await ask_teammate("you_block_me", { status: global.me, options: options_2 });
                 let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1);
                 if (reply.type == "plan" && (current_intention === undefined // there can be multiple calls in parallel
                         || !(current_intention.predicate[0] == "follow_plan" || current_intention.predicate[0] == "generate_plan"))) {
                     if(comms_logs) console.log(colors.bgblue + "[opt_gen]" + resetColor + " partner decided for coop plan");
+                    if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "pushing following option");
                     await myAgent.push(["follow_plan", 9999, reply.obj]);
                     return;
                 }
@@ -996,7 +997,7 @@ async function option_generation(caller_method_id) {
                 }
                 // using the distance path, if it returns null means that the agent cannot reach that point
                 let distance = distance_path(global.me, position, true);
-                if (distance) {
+                if (distance){
                     options.push(["go_to", position.value - distance - 100, position.x, position.y]); //-100-> priority go_to < all others cases
                     option_is_generated = true;
                 }
@@ -1025,6 +1026,7 @@ async function option_generation(caller_method_id) {
                 let reply = await ask_teammate("option_communication", options.slice(0, 2));
                 if (reply.type == "go_with_second"){
                     //use second option
+                    if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "pushing option: " + options[1]);
                     await myAgent.push(options[1]);
                     return;
                 } else if(reply.type == "generate_another"){
@@ -1049,7 +1051,7 @@ async function option_generation(caller_method_id) {
                 selectedPosition.time = Date.now();
             }
         }
-        /*if(logs)*/ print_error(colors.blue + "[opt_gen] " + resetColor + "pushing best options: " + options[0]);
+        if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "pushing best option: " + options[0]);
         await myAgent.push(options[0]);
     }
     else {
@@ -1209,7 +1211,7 @@ function distance_path(start_pos, end_pos, consider_partner_obstacle) {
     }
     let grid_copy = grid.map(row => [...row]);
     for (let agent of beliefSet_agents.values()) {
-        if (agent != undefined && agent.x != start_pos.x && agent.y != start_pos.y) {
+        if (agent != undefined) {
             try {
                 if (global.me.id != agent.id && (consider_partner_obstacle || agent.id != global.communication.partner_id))
                     //mark obstacles on the grid
@@ -1225,9 +1227,12 @@ function distance_path(start_pos, end_pos, consider_partner_obstacle) {
     let end = new Node(Math.round(end_pos.x), Math.round(end_pos.y), 0, 0);
     let path = Pathfinder.aStar(grid_copy, start, end);
 
-    if (path == null)
+    if (path == null){
         return null;
-    else return path.length;
+    }
+    else{
+        return path.length;
+    }
 }
 
 
