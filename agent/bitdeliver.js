@@ -199,17 +199,6 @@ class IntentionRevision {
                 // Current intention
                 const intention = this.intention_queue[0];
 
-                //if go_to intention -> reset timer of near tiles to not choose a destination too near to me (Planner calls are expensive)
-                if (intention.predicate[0] == "go_to" && map.favorite_coordinates){
-                    for (let coordinates in map.favorite_coordinates) {
-                        if (!(intention.predicate[2] == coordinates.x && intention.predicate[3] == coordinates.y)){
-                            if (distance_manhattan(global.me, coordinates) <= config.PARCELS_OBSERVATION_DISTANCE){
-                                coordinates.time = Date.now();
-                            }
-                        }
-                    }
-                }
-        
                 // Start achieving intention
                 if (logs) console.log(colors.red + "[main_loop] " + resetColor + 'try achiving -> ', intention);
                 await intention.achieve()
