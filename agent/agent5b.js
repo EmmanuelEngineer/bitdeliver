@@ -251,7 +251,7 @@ class IntentionRevisionReplace extends IntentionRevision {
                     return;
                 }
                 // current intention has higher priority
-                else if (last.predicate[1] > predicate[1]) {
+                else if (last.predicate[1] + 4 > predicate[1]) { //+ 4 to limit the Planner calls (axpensive)
                     return;
                 }
                 // Force current intention stop 
@@ -261,6 +261,9 @@ class IntentionRevisionReplace extends IntentionRevision {
                 if (logs) console.log(colors.magenta + "[Intentions] " + resetColor + "no last in the queue");
             }
         }
+        //if random move alraady pushed then return
+        if ([...myAgent.intention_queue.values()].some(intention => (intention.predicate[0] == "random_move")) && predicate[0] == "random_move")
+            return;
         // pushing new intention 
         if (logs) console.log(colors.magenta + "[Intentions] " + resetColor + "IntentionRevisionReplace.push " + predicate);
         const intention = new Intention(this, predicate);
@@ -904,7 +907,7 @@ function say_to_teammate(msg_type, obj) {
 
 //send message && waiting an answere
 async function ask_teammate(msg_type, obj) {
-    if(debug_logs) console.log("Sending:", { type: msg_type, obj:obj });
+    if(debug_logs) console.log("[Message][Asking][debug]", { type: msg_type, obj:obj });
     let message = "";
     if (obj instanceof Map){
         message = mapToJSON(obj);
@@ -1101,73 +1104,78 @@ async function option_generation(caller_method_id) {
 
 // generate options for parcels
 function options_by_parcels(consider_partner = true) {
+
     //Index:
     //option 1  go_deliver
     //option 2  go_pick_up parcel -> deliver
-    //option 3  pick_up paarcel2 -> pick_up parcel -> deliver
+    //option 3  pick_up parcel2 -> pick_up parcel -> deliver    (option 2 + early deviation to parcel2)
     //option 4  deliver -> pick_up parcel
-    //option 5  pick_up paarcel2 -> deliver -> pick_up parcel
-    compute_parcel_risk();
+    //option 5  pick_up paarcel2 -> deliver -> pick_up parcel   (option 4 + early deviation to parcel2)
+
+    compute_parcel_risk(); //risk of being stolen (depends on the proximity of the agents to the parcel)
     const options = [];
-    let parcels_on_me_counter = 0;
-    let parcels_on_me_reward = 0;
+    let parcels_on_me_counter = 0; //# of parcels on me
+    let parcels_on_me_reward = 0; //collective reward of parcels on me
     for (const parcel of beliefSet_parcels.values()) {   //process all parcels I'm carrying
         if (parcel.carriedBy == global.me.id) {
             parcels_on_me_reward += parcel.reward;
             parcels_on_me_counter += 1;
         }
     }
-    if (parcels_on_me_counter) { //compute go_deliver (option 1)
+    /////////////////////////////////// compute go_deliver (option 1)
+    if (parcels_on_me_counter) {
         let delivery_point = get_nearest_delivery_point_path(global.me, consider_partner);
-        if (!delivery_point) {
+        if (!delivery_point) { //not reachable
             if (logs) console.log(colors.blue + "[opt_gen] " + resetColor + "unable to find path to delivery from here ", global.me);
         }
         else {
             let priority;
-            if (decay_time) {
+            if (decay_time) { //based on decay time do different calculus (I'm less in a hurry to deliver if there is no decay time)
+                //compute the lost of the reward
                 priority = parcels_on_me_reward - (parcels_on_me_counter * delivery_point.distance) * (decay_time / 1000) / (config.MOVEMENT_DURATION / norm_cost);
             }
             else {
                 priority = parcels_on_me_reward;
             }
+            //pushing go_deliver (option 1)
             options.push(['go_deliver', priority, delivery_point.x, delivery_point.y]);
-            if (debug_logs) console.log("pushing go_deliver", delivery_point.x, delivery_point.y, "with priority:", priority ,"->", parcels_on_me_reward, "-", parcels_on_me_counter, delivery_point.distance, decay_time/1000, "/",config.MOVEMENT_DURATION/norm_cost);
+            if (debug_logs) console.log("[opt_gen][debug] pushing go_deliver", delivery_point.x, delivery_point.y, "with priority:", priority ,"->", parcels_on_me_reward, "-", parcels_on_me_counter, delivery_point.distance, decay_time/1000, "/",config.MOVEMENT_DURATION/norm_cost);
         }
     }
     //compute option for parcels
     for (const parcel of beliefSet_parcels.values()) {
         if (parcel.carriedBy == global.me.id || parcel.id == forget_parcel_id || (parcel.carriedBy == global.communication.partner_id && global.communication.partner_id != null)) {          //We carry the parcel
-            continue;
+            continue;   //parcel unavailable
         }
-        else if (!parcel.carriedBy) {             //free parcel
-            let distance_parcel = distance_path(global.me, parcel, consider_partner);    //and is reachable
+        else if (!parcel.carriedBy) {   //free parcel
+            ///////////////////////////////////// compute go_pick_up parcel (-> deliver) (option 2)
+            let distance_parcel = distance_path(global.me, parcel, consider_partner);    //and it is reachable?
             if (!distance_parcel) {
                 if (logs) console.log(colors.blue + "[opt_gen] " + resetColor + "unable to find path to", parcel);
-                continue;
+                continue; //not reachable
             }
-
-            let delivery_point_from_parcel = get_nearest_delivery_point_path(parcel, consider_partner); //and is deliverable + there is a decay time
-            if (!delivery_point_from_parcel && decay_time){
+            let delivery_point_from_parcel = get_nearest_delivery_point_path(parcel, consider_partner);
+            if (!delivery_point_from_parcel && decay_time){ //and is deliverable? + there is a decay time?
                 if (logs) console.log(colors.blue + "[opt_gen] " + resetColor + "unable to find nearest delivery point to", parcel);
-                options.push(['go_pick_up', parcel.reward -parcel.stealing_risk - 30, parcel.x, parcel.y]); //do this if there is nothing else (better then nothing even if i can not deliver it)
+                options.push(['go_pick_up', parcel.reward -parcel.stealing_risk - 30, parcel.x, parcel.y]); //do this if there is nothing else (better picking it up even if I can not deliver it)
                 continue;
             }
             let base_priority;
-            if (decay_time) {     //compute priority & push option "go_pick_up"
+            if (decay_time) {     //compute priority (the lost of the reward on the way)
                 base_priority = parcel.reward + parcels_on_me_reward - (parcels_on_me_counter + 1) * (distance_parcel + delivery_point_from_parcel.distance) * (decay_time / 1000) / (config.MOVEMENT_DURATION / norm_cost);
             }
             else {
                 base_priority = parcel.reward + parcels_on_me_reward;
             }
-            //go_pick_up parcel -> deliver (option 2)
+            //pushing go_pick_up (option 2)
             options.push(['go_pick_up', base_priority -parcel.stealing_risk, parcel.x, parcel.y]);
-            if (debug_logs) console.log("pushing go_pick_up", parcel.x, parcel.y, "with priority:", priority ,"->", parcel.reward , parcels_on_me_reward, "-", parcels_on_me_counter+1, distance_parcel,"+",delivery_point_from_parcel.distance,
+            if (debug_logs) console.log("[opt_gen][debug] pushing go_pick_up", parcel.x, parcel.y, "with priority:", base_priority, "->", parcel.reward , parcels_on_me_reward, "-", parcels_on_me_counter+1, distance_parcel,"+",delivery_point_from_parcel.distance,
                 decay_time/1000, "/",config.MOVEMENT_DURATION/norm_cost);
 
-            //compute second parcel option: (pick up parcel2 first)
+            ///////////////////////////////////// compute second parcel option: (pick up parcel2 first) (option 3)
             for (const parcel2 of beliefSet_parcels.values()) {
                 if (parcel2.carriedBy || parcel2 === parcel || parcel2.id == forget_parcel_id) {
-                    continue;
+                    continue;   //stolen
                 }
                 //add deviation to the path
                 let distance_parcel2 = distance_path(global.me, parcel2, consider_partner);
@@ -1179,22 +1187,22 @@ function options_by_parcels(consider_partner = true) {
                 if (deviation_priority < 0) {
                     continue; // check if it's worth
                 }
-                //pick_up paarcel2 -> pick_up parcel -> deliver (option 3)
+                //pushing pick_up paarcel2 (-> pick_up parcel -> deliver) (option 3)
                 options.push(['go_pick_up', base_priority + deviation_priority - parcel2.stealing_risk, parcel2.x, parcel2.y]);
             }
 
-            //compute go deliver first option
+            /////////////////////////////////////compute go_deliver first (option 4)
             if (parcels_on_me_counter) {
                 let delivery_point = get_nearest_delivery_point_path(global.me, consider_partner);
                 if (!delivery_point){
                     continue;
                 }
                 base_priority = parcel.reward + parcels_on_me_reward - ((parcels_on_me_counter + 1) * delivery_point.distance + delivery_point_from_parcel.distance * 2) * (decay_time / 1000) / (config.MOVEMENT_DURATION / norm_cost);
-                //deliver -> pick_up parcel (option 4)
+                //pushing go_deliver (-> pick_up parcel) (option 4)
                 options.push(['go_deliver', base_priority, delivery_point.x, delivery_point.y]);
-                if (debug_logs) console.log("pushing go_deliver", delivery_point_from_parcel.x, delivery_point_from_parcel.y, "with priority:", priority ,"->", parcel.reward , parcels_on_me_reward,
+                if (debug_logs) console.log("[opt_gen][debug] pushing go_deliver", delivery_point_from_parcel.x, delivery_point_from_parcel.y, "with priority:", base_priority ,"->", parcel.reward , parcels_on_me_reward,
                    "-", parcels_on_me_counter+1, delivery_point.distance,"+",delivery_point_from_parcel.distance, decay_time/1000, "/",config.MOVEMENT_DURATION/norm_cost)
-                //compute 2 package option
+                ///////////////////////////////////// compute second parcel option: (pick up parcel2 first) (option 5)
                 for (const parcel2 of beliefSet_parcels.values()) {
                     if (parcel2.carriedBy || parcel2 === parcel || parcel2.id == forget_parcel_id) {
                         continue;
@@ -1209,12 +1217,12 @@ function options_by_parcels(consider_partner = true) {
                     if (deviation_priority < 0) {
                         continue; // check if it's worth
                     }
-                    //pick_up paarcel2 -> deliver -> pick_up parcel (option 5)
+                    //pushing pick_up paarcel2 (-> deliver -> pick_up parcel) (option 5)
                     options.push(['go_pick_up', base_priority + deviation_priority - parcel2.stealing_risk, parcel2.x, parcel2.y]);
                 }
             }
         }
-        else {
+        else { //no options generated
             if (logs) print_error("[opt_gen] parcel unusable to generate option: " + parcel.id);
         }
     }
@@ -1273,7 +1281,7 @@ function distance_path(start_pos, end_pos, consider_partner_obstacle) {
 
 
 
-//compute the shortest path to a delivery point
+//compute the shortest PATH to a delivery point
 function get_nearest_delivery_point_path(a, consider_partner_obstacle) {
     let min = Number.MAX_VALUE;
     let nearest_point = null;
@@ -1293,6 +1301,7 @@ function get_nearest_delivery_point_path(a, consider_partner_obstacle) {
     return nearest_point;
 }
 
+//compute the manhattan distance between a && b
 function distance_manhattan(a, b) {
     const dx = Math.abs(Math.round(a.x) - Math.round(b.x))
     const dy = Math.abs(Math.round(a.y) - Math.round(b.y))
@@ -1323,23 +1332,13 @@ class Plan {
         return this.#stopped;
     }
 
-    /**
-     * #parent refers to caller
-     */
     #parent;
 
     constructor(parent) {
         this.#parent = parent;
     }
 
-    /*log(...args) {
-        if (this.#parent && this.#parent.log)
-            this.#parent.log('\t', ...args)
-        else
-            if (logs) console.log(colors.green + "[plan_log] " + resetColor, ...args)
-    }*/
-
-    // this is an array of sub intention. Multiple ones could eventually being achieved in parallel.
+    // this is an array of sub intention. Multiple ones could eventually being achieved in parallel.  (not used)
     #sub_intentions = [];
 
     async subIntention(predicate) {
@@ -1360,20 +1359,20 @@ class Plan_single extends Plan { // Plan for the sigle agent
     }
 
     async execute(intention, priority, x, y) {
-
+        //generate a plan
         let plan = await generate_plan(intention, x, y, 0);
         if (logs) console.log(colors.green + "[plan] " + resetColor + "executing:", intention, priority, x, y)
         if (this.stopped) throw ['stopped'];
-        if (!plan || plan.length === 0) {
+        if (!plan || plan.length === 0) { //plan not found
             if (logs) console.log(colors.green + "[plan] " + resetColor + "plan not found" + resetColor);
             throw ['failed (no single-plan found)'];
         }
-        else {
+        else {  //plan faound
             if (logs) console.log(colors.green + "[plan] " + resetColor + "plan found");
-            for (let step of plan) {
+            for (let step of plan) { //execute plan step by step (parcing actions)
                 if (this.stopped) throw ['stopped'];
                 let action = step.action;
-                if (action == "MOVE") {
+                if (action == "MOVE") { //parcing action (MOVE)
                     let [ag, from, to] = step.args;
                     if (logs) console.log(colors.green + "[plan] " + resetColor + " starting moving to", to);
                     const regex = /P(\d+)_(\d+)/;
@@ -1384,12 +1383,12 @@ class Plan_single extends Plan { // Plan for the sigle agent
                     else {
                         print_error(`Invalid position format: ${position}`);
                     }
-                    await move(to)
-                } else if (action == "GRAB") {
+                    await move(to);
+                } else if (action == "GRAB") { //parcing action (GRAB)
                     let [ag, ob, pos] = step.args;
                     await client.pickup();
                     if (logs) console.log(colors.green + "[plan] " + resetColor + `${ag} grab ${ob} in ${pos}`);
-                } else if (action == "DROP") {
+                } else if (action == "DROP") { //parcing action (DROP)
                     let [ag, ob, pos] = step.args;
                     await client.putdown();
                     delete_put_down();
@@ -1413,42 +1412,43 @@ class Plan_coop extends Plan {
     }
     async execute(intention, priority, partner_option, partner_status) {
         if(logs) console.log(colors.green + "[plan] " + resetColor + "generating coop plan "+ reply_for_plan)
-
+        //generate coop plan
         partner = { x: Math.round(partner_status.x), y: Math.round(partner_status.y), id: partner_status.id }
         let plan = await generate_plan(partner_option[0], partner_option[2], partner_option[3], true);
 
         if(this.stopped) throw ['stopped'];
 
-        if(!plan || plan.length === 0){
+        if(!plan || plan.length === 0){//plan not found
             if(logs) console.log(colors.green + "[plan] " + resetColor + "plan not found");
             if(comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " waiting partner response, time passed: " + Date.now() - reply_for_plan.time);
             while(reply_for_plan.reply == null) { //wait the partner to follow the orders
                 if(Date.now() - reply_for_plan.time > killing_time_for_next_step_of_plan){
                     throw ['failed: no coop plan found and no reply obtained'];
                 }
-                await sleep(500)
+                // to avoid that node microcode doesn't let the events activate for the messages
+                await sleep(500);
             }
-            try {
+            try { //send stop coop plan message
                 if(comms_logs) console.log(colors.bggreen + "[plan comms]" + colors.bgmagenta + "[Replying]" + resetColor + " coop plan not found, stop waiting orders");
                 reply_for_plan.reply("stop");
                 if(debug_logs) console.trace();
             } catch (error) { print_error(error) }
             throw ['failed: no coop plan found'];
         }
-        else {
+        else { //plan found
             let reply = null;
-            for(let step of plan) {
+            for(let step of plan) { //execute plan step by step (parcing actions)
                 reply_for_plan.time = Date.now();
                 //active loop for waiting the partner
                 while (reply_for_plan.reply == null) {
                     if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " waiting partner reply, time passed: " + Date.now() - reply_for_plan.time);
                     if(debug_logs) console.trace();
-                    if(reply_for_plan.msg.msg == "stop"){
+                    if(reply_for_plan.msg.msg == "stop"){  //partner wants to stop the coop plan
                         if (comms_logs) console.log(colors.bggreen + "[plan comms][Response]" + resetColor + " partner interrupted coop plan");
                         reply_for_plan = { time: 0, status: "stopped" }
                         throw ["stopped by partner"];
                     }
-                    if(Date.now() - reply_for_plan.time > killing_time_for_next_step_of_plan){
+                    if(Date.now() - reply_for_plan.time > killing_time_for_next_step_of_plan){ //partner response waiting time expired
                         if(comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " no reply obtained in time");
                         throw ['failed: no reply obtained'];
                     }
@@ -1462,16 +1462,17 @@ class Plan_coop extends Plan {
                 if(comms_logs) console.log(colors.bggreen + "[plan comms][Response]" + resetColor + " reply obtained");
                 reply = reply_for_plan.reply
                 let action = step.action;
-                if(action == "MOVE_COOP") {
+                if(action == "MOVE_COOP") { //parcing action (MOVE_COOP)
                     let [ag, ag2, from, to] = step.args;
-                    if (ag == "PARTNER") {
-                        // use the reply object to communicate since the partner is waiting for it
+                    if (ag == "PARTNER") { //instruction for partner
                         if(comms_logs) console.log(colors.bggreen + "[plan comms]" + colors.bgmagenta + "[Replying]" + resetColor + " sending partner step");
+                        // use the reply object to communicate since the partner is waiting for it
                         reply_for_plan.reply = null;
                         reply({ obj: step, msg: "go" });
                     }
-                    else {
+                    else { //instruction for me
                         if(comms_logs) console.log(colors.bggreen + "[plan comms]" + colors.bgmagenta + "[Replying]" + resetColor + " ordering partner to stay put");
+                        // communicate to partner to stay put (don't let the partner time exire && don't let the partner assume that the connection was lost)
                         reply_for_plan.reply = null;
                         reply({ msg: "stay_put" });
 
@@ -1479,15 +1480,10 @@ class Plan_coop extends Plan {
                         try {
                             await move(to);
                         }
-                        catch (error) {
-                            while (reply_for_plan.reply == null) {
+                        catch (error) { //error occurred -> stopped coop plan
+                            while (reply_for_plan.reply == null) { 
                                 if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " waiting partner reply, time passed: " + Date.now() - reply_for_plan.time);
                                 if (debug_logs) console.trace();
-                                if (reply_for_plan.msg == "stop"){
-                                    if (comms_logs) console.log(colors.bggreen + "[plan comms][Response]" + resetColor + " partner interrupted coop plan");
-                                    reply_for_plan = { time: 0, status: "stopped" }
-                                    throw ["stopped by partner"];
-                                }
                                 if (Date.now() - reply_for_plan.time > killing_time_for_next_step_of_plan){
                                     if(comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " no reply obtained in time");
                                     throw ['failed: no reply obtained'];
@@ -1499,7 +1495,13 @@ class Plan_coop extends Plan {
                                     throw ["stopped by partner"];
                                 }
                             }
+                            if (reply_for_plan.msg == "stop"){ //partner already replied to stop
+                                if (comms_logs) console.log(colors.bggreen + "[plan comms][Response]" + resetColor + " partner interrupted coop plan");
+                                reply_for_plan = { time: 0, status: "stopped" }
+                                throw ["stopped by partner"];
+                            }
                             if(comms_logs) console.log(colors.bggreen + "[plan comms]" + colors.bgmagenta + "[Replying]" + resetColor + " move failed, stop coop plan");
+                            //tell to the partner to stop the coop plan
                             reply_for_plan.reply({ msg: "stop" });
                             if (debug_logs)console.trace();
                             if (kill){
@@ -1508,25 +1510,25 @@ class Plan_coop extends Plan {
                             throw [error];
                         }
                     }
-                } else if (action == "GRAB") {
+                } else if (action == "GRAB") { //parcing action (GRAB)
                     let [ag, ob, pos] = step.args;
-                    if (ag == "PARTNER") {
+                    if (ag == "PARTNER") {  //instruction for partner
                         if(comms_logs) console.log(colors.bggreen + "[plan comms]" + colors.bgmagenta + "[Replying]" + resetColor + " sending partner step");
                         reply_for_plan.reply = null;
                         reply({ obj: step, msg: "go" });
                     }
-                    else {
+                    else { //instruction for me
                         await client.pickup();
                         if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} grab ${ob} in ${pos}`);
                     }
-                } else if (action == "DROP") {
+                } else if (action == "DROP") { //parcing action (DROP)
                     let [ag, ob, pos] = step.args;
-                    if (ag == "PARTNER") {
+                    if (ag == "PARTNER") { //instruction for partner
                         if(comms_logs) console.log(colors.bggreen + "[plan comms]" + colors.bgmagenta + "[Replying]" + resetColor + " sending partner step");
                         reply_for_plan.reply = null;
                         reply({ obj: step, msg: "go" });
                     }
-                    else {
+                    else { //instruction for me
                         await client.putdown();
                         delete_put_down();
                         if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} drop ${ob} in ${pos}`);
@@ -1534,6 +1536,7 @@ class Plan_coop extends Plan {
                 }
             }
             if(comms_logs) console.log(colors.bggreen + "[plan comms]" + colors.bgmagenta + "[Replying]" + resetColor + " coop plan completed");
+            //coop plan finished -> sending stop message to partner
             reply_for_plan.reply({ msg: "stop" });
             return "success";
         }
@@ -1552,26 +1555,29 @@ class Plan_receiver extends Plan {
 
     async execute(intention, priority) {
         if (logs) console.log(colors.green + "[plan]" + resetColor + " starting receiver coop plan");
+        //set plan follower variables
         plan_following_status.last_message_received = Date.now()
         plan_following_status.active = true
 
         while (plan_following_status.active) {
             if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " waiting orders");
+            //wait instructions
             let reply = await client.ask(global.communication.partner_id, { type: "following", msg: "i'm here" });
             plan_following_status.last_message_received = Date.now()
 
             if (comms_logs) console.log(colors.bggreen + "[plan comms][Response]" + resetColor + " obtaing orders: " + reply.msg);
-            if (reply.msg == "stop") {
+            if (reply.msg == "stop") {  //stop the coop plan (failed or completed)
                 if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " stopping coop plan");
                 plan_following_status.active = false;
             }
-            if (reply.msg == "stay_put"){
+            if (reply.msg == "stay_put"){ //waiting new instruction (communication timer reset)
                 if (comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " standing put");
                 continue;
             }
             let step = reply.obj
             let action = step.action;
-            if (action == "MOVE_COOP") {
+            //parceing actions
+            if (action == "MOVE_COOP"){ //move action
                 let [ag, ag2, from, to] = step.args;
                 try { 
                     await move(to);
@@ -1581,24 +1587,22 @@ class Plan_receiver extends Plan {
                     if(debug_logs){
                         console.trace();
                     }
-                    if (kill){
-                        process.exit();
-                    }
                     throw [error];
                 }
-            } else if (action == "GRAB") {
+            } else if (action == "GRAB"){//grab action
                 let [ag, ob, pos] = step.args;
                 await client.pickup();
                 if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} grab ${ob} in ${pos}`);
-            } else if (action == "DROP") {
+            } else if (action == "DROP"){ //drop action
                 let [ag, ob, pos] = step.args;
                 await client.putdown();
                 delete_put_down();
                 if (logs) console.log(colors.green + "[plan]" + resetColor + ` ${ag} drop ${ob} in ${pos}`);
             }
         }
+        //plan finished
         if(comms_logs) console.log(colors.bggreen + "[plan comms]" + resetColor + " coop plan completed");
-        return "success";
+        return "terminated";
     }
 }
 
@@ -1614,7 +1618,7 @@ class RandomMove extends Plan {
     }
 
     async execute(intention, priority, x, y) {
-        const direction = getRandomDirection();
+        const direction = getRandomDirection(); //get random direction
         if (logs) console.log(colors.green + "[plan] " + resetColor + "move randomly: ", direction);
         await client.move(direction);
         return "success";
@@ -1626,6 +1630,7 @@ class RandomMove extends Plan {
 //(8f) plan variable
 //---------------------------------------------------------------------------------------------------
 
+//plan library
 const planLibrary = [];
 
 // plan classes are added to plan library 
@@ -1641,11 +1646,13 @@ planLibrary.push(RandomMove);
 
 async function generate_plan(intention, x, y, coop) {
     const myBeliefset = new Beliefset();
-    for (let ob of myMapBeliefset) {
+    for (let ob of myMapBeliefset) { //copying general map structure (near predicates for tiles (which tile is adjacent to which other))
         myBeliefset.declare(ob);
     }
     let goal = '';
     for (const agent_obj of beliefSet_agents) {
+        //if a tile is blocked (by an opponent || partner in single case planner) remove the connections to the ones arount it to it
+        // if I can't reach the tile, it's like removing it
         const agent = agent_obj[1];
         agent.x = Math.round(agent.x);
         agent.y = Math.round(agent.y);
@@ -1673,8 +1680,9 @@ async function generate_plan(intention, x, y, coop) {
             }
         }
     }
+    //set current situation info, intention and goal
     myBeliefset.declare(`on me p${Math.round(global.me.x)}_${Math.round(global.me.y)}`);
-    if (!coop) {
+    if (!coop) { //single case
         if (intention == 'go_pick_up') {
             myBeliefset.declare(`on_pkg target p${x}_${y}`);
             goal = `holding me target`;
@@ -1687,7 +1695,7 @@ async function generate_plan(intention, x, y, coop) {
             goal = `on me p${x}_${y}`;
         }
     }
-    else {
+    else { //coop case
         myBeliefset.declare(`on partner p${Math.round(partner.x)}_${Math.round(partner.y)}`);
         myBeliefset.declare(`different partner me`);
         myBeliefset.declare(`different me partner`);
@@ -1696,10 +1704,11 @@ async function generate_plan(intention, x, y, coop) {
             goal = `on_pkg target p${x}_${y}`;
         }
         else {
-            if (logs) console.log(colors.green + "[plan] " + resetColor + "coop mode with unknown intention");
+            print_error("[plan] coop mode with unknown intention");
             throw ['unsupported intention (coop mode)'];
         }
     }
+    //check and correct the variables string (becaouse I have to declare the types of the variables correctly)
     let objectsStr = myBeliefset.objects.join(' ');
     objectsStr = objectsStr.replace(' me', '');
     objectsStr = objectsStr + ' - position';
@@ -1715,20 +1724,22 @@ async function generate_plan(intention, x, y, coop) {
     else {
         objectsStr = objectsStr + ' me - agent';
     }
+    //create PDDL problem
     let pddlProblem = new PddlProblem(
         'bitdelivery-prob',
         objectsStr,
         myBeliefset.toPddlString(),
         goal
     )
+    //save the problem to file
     if (save_pddl) pddlProblem.saveToFile();
     let problem = pddlProblem.toPddlString();
 
     let plan;
-    if (!coop) {
+    if (!coop) {//single case -> use single case domain
         plan = await onlineSolver(domain, problem);
     }
-    else {
+    else {//coop case -> use coop case domain
         plan = await onlineSolver(domain_coop, problem);
     }
     return plan;
@@ -1736,6 +1747,7 @@ async function generate_plan(intention, x, y, coop) {
 
 //function to move in one direction by one tile
 async function move(to) {
+    //convert the position from PDDL format
     const regex = /P(\d+)_(\d+)/;
     const match = to.match(regex);
     if (match) {
@@ -1745,7 +1757,7 @@ async function move(to) {
       print_error(`Invalid position format: ${position}`);
     }
     let counter = 0;
-    while (global.me.x != x || global.me.y != y) {
+    while (global.me.x != x || global.me.y != y) { //parsing direction
         let last_action = null
         let me_tmp = { x: global.me.x, y: global.me.y };
         if (x < global.me.x) {
@@ -1764,16 +1776,16 @@ async function move(to) {
             last_action = "down";
             await client.move('down');
         }
-        if ((global.me.x == me_tmp.x) && (me.y == me_tmp.y) && (counter < 3)) {
+        if ((global.me.x == me_tmp.x) && (me.y == me_tmp.y) && (counter < 3)) { //retrying a bit if failed
             if (logs) console.log(colors.green + "[plan] " + resetColor + "-> retrying");
                 counter++;
             continue;
         }
-        else if (counter == 3) {
+        else if (counter == 3) { //stucked throw error
             if (logs) console.log(colors.green + "[plan] " + resetColor + "-> execute STUCKED");
             throw [colors.green + "[plan]" + resetColor + 'stucked'];
         }
-        else {
+        else { //if I did the move set my position correctly (my actial position could not be an integer)
             global.me.x = x;
             global.me.y = y;
         }
@@ -1781,12 +1793,14 @@ async function move(to) {
     }
 }
 
+//for random move plan
 function getRandomDirection() {
     const directions = ["up", "down", "left", "right"];
     const randomIndex = Math.floor(Math.random() * directions.length);
     return directions[randomIndex];
 }
 
+// used to avoid that node microcode doesn't let the events activate for the messages
 function sleep(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
@@ -1811,5 +1825,6 @@ function delete_put_down() {
 //(9) program launch
 //###################################################################################################
 
+//launch the main loop
 const myAgent = new IntentionRevisionReplace();
 myAgent.loop();
