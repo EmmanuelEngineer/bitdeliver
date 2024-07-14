@@ -64,7 +64,7 @@ import fs from 'fs';
 //---------------------------------------------------------------------------------------------------
 
 // to print logs
-const logs = false;
+const logs = true;
 const comms_logs = true;
 const debug_logs = false;
 //te save PDDL file 
@@ -255,16 +255,11 @@ class IntentionRevisionReplace extends IntentionRevision {
             else{
                 if (logs) console.log(colors.magenta + "[Intentions] " + resetColor + "no last in the queue");
             }
-            // pushing new intention 
-            if (logs) console.log(colors.magenta + "[Intentions] " + resetColor + "IntentionRevisionReplace.push " + predicate);
-            const intention = new Intention(this, predicate);
-            this.intention_queue.push(intention);  
         }
-        // if i'm changing plan release the other agent
-        if(last && (last.predicate[0] == "generate_plan")){
-            print_error("condition = true in push function"); //to_remove
-            //await remove_plan();  
-        }
+        // pushing new intention 
+        if (logs) console.log(colors.magenta + "[Intentions] " + resetColor + "IntentionRevisionReplace.push " + predicate);
+        const intention = new Intention(this, predicate);
+        this.intention_queue.push(intention);
     }
 
     async remove_plan() {
@@ -283,7 +278,6 @@ class IntentionRevisionReplace extends IntentionRevision {
         }
     }
 }
-
 
 
 //---------------------------------------------------------------------------------------------------
@@ -324,11 +318,6 @@ class Intention {
         this.#predicate = predicate;
     }
 
-    /*log(...args) { //to_remove
-        if (this.#parent && this.#parent.log)
-            this.#parent.log(...args)
-        else if (logs) console.log(colors.green + "[plan]" + resetColor, ...args)
-    }*/
 
     #started = false;
     /**
@@ -801,9 +790,12 @@ client.onMsg(async (id, name, msg, reply) => {
                     // preparing for the plan execution
                     if(debug_logs) console.log("[onMsg][debug] replying preparing coop plan");
                     reply_for_plan = { time: 0, status: "not_received" };
-                    if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "pushing coop plan option");
+                    if(comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " pushing coop plan option (generator)");
                     await myAgent.push(["generate_plan", 9999, partner_options[0], partner_status]);
                     reply({ type: "plan" });
+                }
+                else{
+                    if(comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " already following coop plan option");
                 }
             }
         } else if(msg.type == "release_me"){
@@ -970,8 +962,7 @@ async function option_generation(caller_method_id) {
                 let current_intention = myAgent.intention_queue.at(myAgent.intention_queue.length - 1);
                 if (reply.type == "plan" && (current_intention === undefined // there can be multiple calls in parallel
                         || !(current_intention.predicate[0] == "follow_plan" || current_intention.predicate[0] == "generate_plan"))) {
-                    if(comms_logs) console.log(colors.bgblue + "[opt_gen]" + resetColor + " partner decided for coop plan");
-                    if(logs) console.log(colors.blue + "[opt_gen] " + resetColor + "pushing following option");
+                    if(comms_logs) console.log(colors.bgyellow + "[onMsg]" + resetColor + " pushing coop plan option (follower)");
                     await myAgent.push(["follow_plan", 9999, reply.obj]);
                     return;
                 }
@@ -1578,7 +1569,6 @@ class RandomMove extends Plan {
     }
 
     async execute(intention, priority, x, y) {
-        return; //to_remove
         const direction = getRandomDirection();
         if (logs) console.log(colors.green + "[plan] " + resetColor + "move randomly: ", direction);
         await client.move(direction);
